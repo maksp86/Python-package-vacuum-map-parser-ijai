@@ -26,7 +26,7 @@ class IjaiMapDataParser(MapDataParser):
 
     POSITION_UNKNOWN = 1100
     robot_map = RobotMap.RobotMap()
-    
+    _map_center = Point(0,0)
     def __init__(
         self,
         palette: ColorsPalette,
@@ -52,9 +52,7 @@ class IjaiMapDataParser(MapDataParser):
         map_data = MapData(0, 1)
 
         IjaiMapDataParser.robot_map.ParseFromString(raw)
-
-#        if feature_flags & IjaiMapDataParser.FEATURE_ROBOT_STATUS != 0:
-#            IjaiMapDataParser.parse_section(buf, 'robot_status', map_id)
+        IjaiMapDataParser._map_center = Point(IjaiMapDataParser.robot_map.mapHead.sizeX/2, IjaiMapDataParser.robot_map.mapHead.sizeY/2)
 
         if hasattr(self.robot_map, "mapData"):
             map_data.image, map_data.rooms, map_data.cleaned_rooms = self._parse_image()
@@ -67,39 +65,19 @@ class IjaiMapDataParser(MapDataParser):
             map_data.charger = Point(x = pos_info.x, y = pos_info.y, a = pos_info.phi * 180 / math.pi)
             _LOGGER.debug("pos: %s", map_data.charger)
 
-#        if feature_flags & IjaiMapDataParser.FEATURE_RESTRICTED_AREAS != 0:
-#            map_data.walls, map_data.no_go_areas = IjaiMapDataParser._parse_restricted_areas(buf)
-
-#        if feature_flags & IjaiMapDataParser.FEATURE_CLEANING_AREAS != 0:
-#            map_data.zones = IjaiMapDataParser._parse_cleaning_areas(buf)
-
-#        if feature_flags & IjaiMapDataParser.FEATURE_NAVIGATE != 0:
-#            map_data.goto = IjaiMapDataParser._parse_position(buf, "pos", with_angle=True)
-#            value = buf.get_float32("value")
-#            _LOGGER.debug("pos: %s, value: %f", map_data.goto, value)
-
         if hasattr(self.robot_map, "currentPose"):
             pos_info = self.robot_map.currentPose
             map_data.vacuum_position = Point(x = pos_info.x, y = pos_info.y, a = pos_info.phi * 180 / math.pi)
             _LOGGER.debug("pos: %s", map_data.vacuum_position)
 
-#        if feature_flags & 0x00000800 != 0:
-#            IjaiMapDataParser._parse_unknown_section(buf)
-
         if hasattr(self.robot_map, "mapInfo") and hasattr(self.robot_map, "roomDataInfo") and map_data.rooms is not None:
             IjaiMapDataParser._parse_rooms(map_data.rooms)
-
-#        if feature_flags & 0x00002000 != 0:
-#            IjaiMapDataParser._parse_unknown_section(buf)
-
-#        if feature_flags & 0x00004000 != 0:
-#            IjaiMapDataParser._parse_room_outlines(buf)
 
         if map_data.rooms is not None:
             _LOGGER.debug("rooms: %s", [str(room) for number, room in map_data.rooms.items()])
             if map_data.rooms is not None and len(map_data.rooms) > 0 and map_data.vacuum_position is not None:
                 vacuum_position_on_image = IjaiMapDataParser._map_to_image(map_data.vacuum_position)
-                map_data.vacuum_room = IjaiImageParser.get_current_vacuum_room(self.robot_map.mapData.mapData, vacuum_position_on_image)
+                map_data.vacuum_room = IjaiImageParser.get_current_vacuum_room(self.robot_map.mapData.mapData, vacuum_position_on_image, IjaiMapDataParser.robot_map.mapHead.sizeX)
                 if map_data.vacuum_room is not None:
                     map_data.vacuum_room_name = map_data.rooms[map_data.vacuum_room].name
                 _LOGGER.debug("current vacuum room: %s", map_data.vacuum_room)
@@ -107,11 +85,11 @@ class IjaiMapDataParser(MapDataParser):
 
     @staticmethod
     def _map_to_image(p: Point) -> Point:
-        return Point(p.x * 20 + 400, p.y * 20 + 400)
+        return Point(p.x * 20 + IjaiMapDataParser._map_center.x, p.y * 20 + IjaiMapDataParser._map_center.y)
 
     @staticmethod
     def _image_to_map(x: float) -> float:
-        return (x - 400) / 20
+        return (x - IjaiMapDataParser._map_center.x) / 20
 
     def _parse_image(self) -> tuple[ImageData, dict[int, Room], set[int]]:
         image_left = 0
@@ -202,7 +180,6 @@ class IjaiMapDataParser(MapDataParser):
                 current_map = map_data
                 break
         map_name = current_map.mapName
-#        map_arg = buf.get_uint32("map_arg")
         _LOGGER.debug("map#%d: %s", current_map.mapHeadId, map_name)
         for r in IjaiMapDataParser.robot_map.roomDataInfo:
             if map_data_rooms is not None and r.roomId in map_data_rooms:

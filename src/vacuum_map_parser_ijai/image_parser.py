@@ -100,9 +100,9 @@ class IjaiImageParser:
         return image, rooms, cleaned_areas, cleaned_areas_layer
 
     @staticmethod
-    def get_current_vacuum_room(map_data: bytes, vacuum_position_on_image: Point) -> int | None:
+    def get_current_vacuum_room(map_data: bytes, vacuum_position_on_image: Point, image_width: int) -> int | None:
         _LOGGER.debug(f"pos on image: {vacuum_position_on_image}")
-        pixel_type = map_data[int(vacuum_position_on_image.y) * 800 + int(vacuum_position_on_image.x)]
+        pixel_type = map_data[int(vacuum_position_on_image.y) * image_width + int(vacuum_position_on_image.x)]
         if IjaiImageParser.MAP_ROOM_MIN <= pixel_type <= IjaiImageParser.MAP_ROOM_MAX:
             return pixel_type
         if IjaiImageParser.MAP_SELECTED_ROOM_MIN <= pixel_type <= IjaiImageParser.MAP_SELECTED_ROOM_MAX:
