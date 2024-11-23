@@ -14,7 +14,7 @@ from vacuum_map_parser_base.map_data import Area, ImageData, MapData, Path, Poin
 from vacuum_map_parser_base.map_data_parser import MapDataParser
 from .ijai_coordinate_transforms import Transformer
 import vacuum_map_parser_ijai.RobotMap_pb2 as RobotMap
-
+import vacuum_map_parser_ijai.beautify_min as Beautify
 
 from .image_parser import IjaiImageParser
 from .aes_decryptor import decrypt
@@ -26,6 +26,10 @@ class IjaiMapDataParser(MapDataParser):
     """Ijai map parser."""
 
     POSITION_UNKNOWN = 1100
+    VIRTUALWALL_TYPE_WALL = 2
+    VIRTUALWALL_TYPE_NO_MOP = 6
+    VIRTUALWALL_TYPE_NO_GO = 3
+
     robot_map = RobotMap.RobotMap()
 
     def __init__(
@@ -74,6 +78,9 @@ class IjaiMapDataParser(MapDataParser):
         if hasattr(self.robot_map, "mapInfo") and hasattr(self.robot_map, "roomDataInfo") and map_data.rooms is not None:
             IjaiMapDataParser._parse_rooms(map_data.rooms)
 
+        if hasattr(self.robot_map, "virtualWalls"):
+            map_data.walls, map_data.no_go_areas, map_data.no_mopping_areas = IjaiMapDataParser._parse_restricted_areas()
+
         if map_data.rooms is not None:
             _LOGGER.debug("rooms: %s", [str(room) for number, room in map_data.rooms.items()])
             if map_data.rooms is not None and len(map_data.rooms) > 0 and map_data.vacuum_position is not None:
@@ -91,6 +98,29 @@ class IjaiMapDataParser(MapDataParser):
         image_height = self.robot_map.mapHead.sizeY
         image_size = image_height * image_width
         _LOGGER.debug("width: %d, height: %d", image_width, image_height)
+
+        mapData_temp = self.robot_map.mapData.mapData
+
+        if (len(set(mapData_temp).symmetric_difference([0, 128, 127])) == 0 and len(self.robot_map.roomChain) > 0 and self.robot_map.mapType == 0):
+            buautify_obj = Beautify.BeautifyMap()
+            buautify_obj.setMap(self.robot_map)
+            buautify_obj.transform()
+            buautify_obj.roomColorByChain(self.robot_map.roomChain)
+            buautify_obj.fillInternalObstacles()
+
+            mapData_temp = buautify_obj.getMap()
+
+            for i in range(len(mapData_temp)):
+                if mapData_temp[i] < 0:
+                    mapData_temp[i] = (256 + mapData_temp[i]) % 256
+                elif mapData_temp[i] > 255:
+                    mapData_temp[i] = mapData_temp[i] % 256
+                elif mapData_temp[i] == 30:
+                    mapData_temp[i] = 0
+                elif mapData_temp[i] == 40:
+                    mapData_temp[i] = 255
+            self.robot_map.mapData.mapData = bytes(mapData_temp)
+
         image, rooms_raw, cleaned_areas, cleaned_areas_layer = self._image_parser.parse(self.robot_map.mapData.mapData, image_width, image_height)
         if image is None:
             image = self._image_generator.create_empty_map_image()
@@ -128,42 +158,24 @@ class IjaiMapDataParser(MapDataParser):
             path_points.append(Point(x = pt.x, y = pt.y))
         return Path(len(path_points), 1, 0, [path_points])
 
-#    @staticmethod
-#    def _parse_restricted_areas(buf: ParsingBuffer) -> tuple[list[Wall], list[Area]]:
-#        walls = []
-#        areas = []
-#        buf.skip("unknown1", 4)
-#        area_count = buf.get_uint32("area_count")
-#        for _ in range(area_count):
-#            buf.skip("restricted.unknown1", 12)
-#            p1 = IjaiMapDataParser._parse_position(buf, "p1")
-#            p2 = IjaiMapDataParser._parse_position(buf, "p2")
-#            p3 = IjaiMapDataParser._parse_position(buf, "p3")
-#            p4 = IjaiMapDataParser._parse_position(buf, "p4")
-#            buf.skip("restricted.unknown2", 48)
-#            _LOGGER.debug("restricted: %s %s %s %s", p1, p2, p3, p4)
-#            if p1 is not None and p2 is not None and p3 is not None and p4 is not None:
-#                if p1 == p2 and p3 == p4:
-#                    walls.append(Wall(p1.x, p1.y, p3.x, p3.y))
-#                else:
-#                    areas.append(Area(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y, p4.x, p4.y))
-#        return walls, areas
+    @staticmethod
+    def _parse_restricted_areas() -> tuple[list[Wall], list[Area], list[Area]]:
+        walls = []
+        no_go_areas = []
+        no_mop_areas = []
 
-#    @staticmethod
-#    def _parse_cleaning_areas(buf: ParsingBuffer) -> list[Zone]:
-#        buf.skip("unknown1", 4)
-#        area_count = buf.get_uint32("area_count")
-#        zones = []
-#        for _ in range(area_count):
-#            buf.skip("area.unknown1", 12)
-#            p1 = IjaiMapDataParser._parse_position(buf, "p1")
-#            IjaiMapDataParser._parse_position(buf, "p2")
-#            p3 = IjaiMapDataParser._parse_position(buf, "p3")
-#            IjaiMapDataParser._parse_position(buf, "p4")
-#            buf.skip("area.unknown2", 48)
-#            if p1 is not None and p3 is not None:
-#                zones.append(Zone(p1.x, p1.y, p3.x, p3.y))
-#        return zones
+        for virtualWall in IjaiMapDataParser.robot_map.virtualWalls:
+            p1, p2, p3, p4 = virtualWall.points
+
+            if virtualWall.type == IjaiMapDataParser.VIRTUALWALL_TYPE_WALL:
+                walls.append(Wall(p1.x, p1.y, p3.x, p3.y))
+            elif virtualWall.type == IjaiMapDataParser.VIRTUALWALL_TYPE_NO_GO:
+                no_go_areas.append(
+                    Area(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y, p4.x, p4.y))
+            elif virtualWall.type == IjaiMapDataParser.VIRTUALWALL_TYPE_NO_MOP:
+                no_mop_areas.append(
+                    Area(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y, p4.x, p4.y))
+        return walls, no_go_areas, no_mop_areas
 
     @staticmethod
     def _parse_rooms(map_data_rooms: dict[int, Room]) -> None:
@@ -182,14 +194,3 @@ class IjaiMapDataParser(MapDataParser):
 
             room_text_pos = Point(r.roomNamePost.x, r.roomNamePost.y)
             _LOGGER.debug("room#%d: %s %s", r.roomId, r.roomName, room_text_pos)
-
-#    @staticmethod
-#    def _parse_room_outlines(buf: ParsingBuffer) -> None:
-#        buf.skip("unknown1", 51)
-#        room_count = buf.get_uint32("room_count")
-#        for _ in range(room_count):
-#            room_id = buf.get_uint32("room.id")
-#            segment_count = buf.get_uint32("room.segment_count")
-#            for _ in range(segment_count):
-#                buf.skip("unknown2", 5)
-#            _LOGGER.debug("room#%d: segment_count: %d", room_id, segment_count)

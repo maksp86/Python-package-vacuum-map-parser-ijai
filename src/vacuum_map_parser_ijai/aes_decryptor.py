@@ -24,7 +24,7 @@ def aes_decrypt(data, key: str):
 
     cipher = AES.new(parsedKey, AES.MODE_ECB)
 
-    decryptedBytes = cipher.decrypt(base64.b64decode(data))
+    decryptedBytes = cipher.decrypt(data)
 
     decryptedData = unpad(decryptedBytes, AES.block_size, 'pkcs7')
     
