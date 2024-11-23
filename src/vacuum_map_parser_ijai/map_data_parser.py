@@ -26,7 +26,8 @@ class IjaiMapDataParser(MapDataParser):
 
     POSITION_UNKNOWN = 1100
     robot_map = RobotMap.RobotMap()
-    _map_center = Point(0,0)
+    _map_to_img_scale = Point(0,0)
+
     def __init__(
         self,
         palette: ColorsPalette,
@@ -52,7 +53,9 @@ class IjaiMapDataParser(MapDataParser):
         map_data = MapData(0, 1)
 
         IjaiMapDataParser.robot_map.ParseFromString(raw)
-        IjaiMapDataParser._map_center = Point(IjaiMapDataParser.robot_map.mapHead.sizeX/2, IjaiMapDataParser.robot_map.mapHead.sizeY/2)
+        map_head = IjaiMapDataParser.robot_map.mapHead
+        IjaiMapDataParser._map_to_img_scale = Point(map_head.sizeX/(map_head.maxX - map_head.minX), 
+                                                    map_head.sizeY/(map_head.maxY - map_head.minY))
 
         if hasattr(self.robot_map, "mapData"):
             map_data.image, map_data.rooms, map_data.cleaned_rooms = self._parse_image()
@@ -78,6 +81,7 @@ class IjaiMapDataParser(MapDataParser):
             if map_data.rooms is not None and len(map_data.rooms) > 0 and map_data.vacuum_position is not None:
                 vacuum_position_on_image = IjaiMapDataParser._map_to_image(map_data.vacuum_position)
                 map_data.vacuum_room = IjaiImageParser.get_current_vacuum_room(self.robot_map.mapData.mapData, vacuum_position_on_image, IjaiMapDataParser.robot_map.mapHead.sizeX)
+                _LOGGER.debug(f"MinX={IjaiMapDataParser.robot_map.mapHead.minX} MaxX={IjaiMapDataParser.robot_map.mapHead.maxX}")
                 if map_data.vacuum_room is not None:
                     map_data.vacuum_room_name = map_data.rooms[map_data.vacuum_room].name
                 _LOGGER.debug("current vacuum room: %s", map_data.vacuum_room)
@@ -85,11 +89,13 @@ class IjaiMapDataParser(MapDataParser):
 
     @staticmethod
     def _map_to_image(p: Point) -> Point:
-        return Point(p.x * 20 + IjaiMapDataParser._map_center.x, p.y * 20 + IjaiMapDataParser._map_center.y)
+        scale = 1 / IjaiMapDataParser.robot_map.mapHead.resolution
+        return Point((p.x - IjaiMapDataParser.robot_map.mapHead.minX) * IjaiMapDataParser._map_to_img_scale.x, 
+                     (p.y - IjaiMapDataParser.robot_map.mapHead.minY) * IjaiMapDataParser._map_to_img_scale.y)
 
     @staticmethod
     def _image_to_map(x: float) -> float:
-        return (x - IjaiMapDataParser._map_center.x) / 20
+        return (x/IjaiMapDataParser._map_to_img_scale.x + IjaiMapDataParser.robot_map.mapHead.minX) 
 
     def _parse_image(self) -> tuple[ImageData, dict[int, Room], set[int]]:
         image_left = 0
