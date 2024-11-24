@@ -51,6 +51,7 @@ class IjaiImageParser:
         trimmed_width = width - trim_left - trim_right
         if trimmed_width == 0 or trimmed_height == 0:
             return None, {}, set(), None
+
         image = Image.new('RGBA', (trimmed_width, trimmed_height))
         pixels = image.load()
         cleaned_areas_layer = None
@@ -62,29 +63,27 @@ class IjaiImageParser:
         _LOGGER.debug(f"trim_bottom = {trim_bottom}, trim_top = {trim_top}, trim_left = {trim_left}, trim_right = {trim_right}")
         unknown_pixels = set()
         for img_y in range(trimmed_height):
+            y = trimmed_height - 1 - img_y
             for img_x in range(trimmed_width):
                 x = img_x
-                y = trimmed_height - 1 - img_y
                 pixel_type = map_data[(img_y + trim_bottom)*width + x + trim_left]
                 if pixel_type in self.color_map.keys():
                     pixels[x, y] = self.color_map[pixel_type]
                 elif IjaiImageParser.MAP_ROOM_MIN <= pixel_type <= IjaiImageParser.MAP_SELECTED_ROOM_MAX:
                     room_x = img_x + trim_left
                     room_y = img_y + trim_bottom
-                    if pixel_type < IjaiImageParser.MAP_SELECTED_ROOM_MIN:
-                        room_number = pixel_type
-                    else:
+                    room_number = pixel_type
+                    if pixel_type >= IjaiImageParser.MAP_SELECTED_ROOM_MIN:
                         room_number = pixel_type - IjaiImageParser.MAP_SELECTED_ROOM_MIN + IjaiImageParser.MAP_ROOM_MIN
                         cleaned_areas.add(room_number)
                         if draw_cleaned_area:
                             cleaned_areas_pixels[x, y] = IjaiImageParser.get_color(SupportedColor.CLEANED_AREA)
-                    if room_number not in rooms:
-                        rooms[room_number] = (room_x, room_y, room_x, room_y)
-                    else:
-                        rooms[room_number] = (min(rooms[room_number][0], room_x),
-                                              min(rooms[room_number][1], room_y),
-                                              max(rooms[room_number][2], room_x),
-                                              max(rooms[room_number][3], room_y))
+                    rooms[room_number] = (room_x, room_y, room_x, room_y) \
+                    if room_number not in rooms \
+                    else (min(rooms[room_number][0], room_x),
+                        min(rooms[room_number][1], room_y),
+                        max(rooms[room_number][2], room_x),
+                        max(rooms[room_number][3], room_y))
                     pixels[x, y] = self._palette.get_room_color(room_number)
                 else:
                     pixels[x, y] = IjaiImageParser.get_color(SupportedColor.UNKNOWN)
