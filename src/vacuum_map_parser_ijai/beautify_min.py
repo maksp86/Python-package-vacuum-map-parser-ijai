@@ -1,17 +1,11 @@
-# STRAIGHT REWRITE FROM MI HOME PLUGIN`S CODE
-import base64
-
-class Point(object):
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-
-    def __repr__(self) -> str:
-        return f'Point({self.x},{self.y})'
+import collections.abc
+from vacuum_map_parser_base.map_data import Point
+from RobotMap_pb2 import RobotMap
+import collections
 
 
 class BeautifyMap:
-    def __init__(self):
+    def __init__(self, mapHead: RobotMap.MapHeadInfo):
         self.map = []
         self.tRect = {
             "x": 0,
@@ -19,124 +13,99 @@ class BeautifyMap:
             "width": 0,
             "height": 0
         }
-        self.x_min = 0
-        self.x_max = 0
-        self.y_min = 0
-        self.y_max = 0
-        self.resolution = 0
-        self.size_x = 0
-        self.size_y = 0
+        self.x_min = mapHead.minX
+        self.x_max = mapHead.maxX
+        self.y_min = mapHead.minY
+        self.y_max = mapHead.maxY
+        self.resolution = mapHead.resolution
+        self.size_x = mapHead.sizeX
+        self.size_y = mapHead.sizeY
 
-    def setSize(self, x_min1, x_max1, y_min1, y_max1, resolution1):
-        self.map = []
-        self.size_x = 0
-        self.size_y = 0
-        self.x_min = int(resolution1 * round(x_min1 / resolution1))
-        self.y_min = int(resolution1 * round(y_min1 / resolution1))
-        self.x_max = int(resolution1 * round(x_max1 / resolution1))
-        self.y_max = int(resolution1 * round(y_max1 / resolution1))
-        self.size_x = int(round((x_max1 - x_min1) / resolution1))
-        self.size_y = int(round((y_max1 - y_min1) / resolution1))
-        self.resolution = resolution1
+    def setMap(self, mapData: RobotMap.MapDataInfo):
+        temp_mapData = mapData.mapData
 
-    def setMap(self, tMapStruct):
-        self.setSize(tMapStruct.mapHead.minX, tMapStruct.mapHead.maxX,
-                     tMapStruct.mapHead.minY, tMapStruct.mapHead.maxY, tMapStruct.mapHead.resolution)
+        tempArray = [0] * len(temp_mapData)
 
-        mapdata_arr = tMapStruct.mapData.mapData
-
-        tempArray = [0] * len(mapdata_arr)
-
-        for i in range(len(mapdata_arr)):
-            if (mapdata_arr[i] > 127):
+        for i in range(len(temp_mapData)):
+            if (temp_mapData[i] > 127):
                 tempArray[i] = -128
             else:
-                tempArray[i] = mapdata_arr[i]
+                tempArray[i] = temp_mapData[i]
 
         self.map = tempArray
+
+    def normalizeMap(self):
+        # normalizing all data to bytes and values suitable for map_data_parser
+        for i in range(len(self.map)):
+            if self.map[i] < 0:
+                self.map[i] = (256 + self.map[i]) % 256
+            elif self.map[i] > 255:
+                self.map[i] = self.map[i] % 256
+            elif self.map[i] == 30:
+                self.map[i] = 0
+            elif self.map[i] == 40:
+                self.map[i] = 255
 
     def getMap(self):
         return self.map
 
     def transform(self):
-        black_boundary = []
         non_boundary_noise = []
-        all_region = []
-        self.tRect = self.findRoiMap(self.tRect)
-        self.expandBlackRect(4, 4, self.map[0], self.tRect)
-        self.expandWhiteRect(4, 4, self.map[0], self.tRect)
-        self.refineBoundary(0, 10, self.tRect)
+        self.findRoiMap()
+        self.expandBlackRect(4, 4, self.map[0])
+        self.expandWhiteRect(4, 4, self.map[0])
+        self.refineBoundary(0, 10)
         non_boundary_noise = self.eliminateNonBoundaryNoise(
-            non_boundary_noise, self.tRect, 127, -128, 0)
-        self.expandSingleConvexBoundary(50, -128, 4, 4, self.tRect)
-        black_boundary = self.removeIndependentRegion(
-            all_region, black_boundary, 3, self.tRect)
+            non_boundary_noise, 127, -128, 0)
+        self.expandSingleConvexBoundary(50, -128, 4, 4)
         non_boundary_noise = self.fillNonBoundaryNoise2(
-            non_boundary_noise, self.tRect)
-        self.refineBoundary(0, 10, self.tRect)
-        self.map = self.fillBlackComponent(self.map, black_boundary, -128)
+            non_boundary_noise)
+        self.refineBoundary(0, 10)
+        self.fillBlackComponent([], -128)
 
-    def findRoiMap(self, rect):
+    def findRoiMap(self):
         top_bound = self.size_x
         bottom_bound = 0
         left_bound = self.size_y
         right_bound = 0
-        for idx in range(self.size_x):
-            for idy in range(self.size_y):
-                if (self.map[idy * self.size_x + idx] != 0):
-                    if (left_bound > idy - 10):
-                        if (idx - 10 >= 0):
-                            left_bound = idy - 10
+        for x in range(self.size_x):
+            for y in range(self.size_y):
+                if (self.map[y * self.size_x + x] != 0):
+                    if (left_bound > y - 10):
+                        if (x - 10 >= 0):
+                            left_bound = y - 10
                         else:
                             left_bound = 0
-                    else:
-                        break
-        for _idx in range(self.size_x):
-            for _idy in range(self.size_y - 1, 0, -1):
-                if (self.map[_idy * self.size_x + _idx] != 0):
-                    if (right_bound < _idy + 10):
-                        if (_idy + 10 < self.size_y):
-                            right_bound = _idy + 10
-                        else:
-                            right_bound = self.size_y - 1
-                    else:
-                        break
-        for _idy2 in range(self.size_y):
-            for _idx2 in range(self.size_x):
-                if (self.map[_idy2 * self.size_x + _idx2] != 0):
-                    if (top_bound > _idx2 - 10):
-                        if (_idx2 - 10 >= 0):
-                            top_bound = _idx2 - 10
+                    if (top_bound > x - 10):
+                        if (x - 10 >= 0):
+                            top_bound = x - 10
                         else:
                             top_bound = 0
-                    else:
-                        break
-        for _idy3 in range(self.size_y):
-            for _idx3 in range(self.size_x - 1, 0, -1):
-                if (self.map[_idy3 * self.size_x + _idx3] != 0):
-                    if (bottom_bound < _idx3 + 10):
-                        if (_idx3 + 10 < self.size_x):
-                            bottom_bound = _idx3 + 10
+                    if (right_bound < y + 10):
+                        if (y + 10 < self.size_y):
+                            right_bound = y + 10
+                        else:
+                            right_bound = self.size_y - 1
+                    if (bottom_bound < x + 10):
+                        if (x + 10 < self.size_x):
+                            bottom_bound = x + 10
                         else:
                             bottom_bound = self.size_x - 1
-                    else:
-                        break
+
         width = right_bound - left_bound + 1
         height = bottom_bound - top_bound + 1
         if (width > 0 and height > 0 and width < self.size_y and height < self.size_x):
-            rect["x"] = top_bound
-            rect["y"] = left_bound
-            rect["width"] = width
-            rect["height"] = height
-            return rect
+            self.tRect["x"] = top_bound
+            self.tRect["y"] = left_bound
+            self.tRect["width"] = width
+            self.tRect["height"] = height
         else:
-            rect["x"] = 0
-            rect["y"] = 0
-            rect["width"] = self.size_y
-            rect["height"] = self.size_x
-        return rect
+            self.tRect["x"] = 0
+            self.tRect["y"] = 0
+            self.tRect["width"] = self.size_y
+            self.tRect["height"] = self.size_x
 
-    def expandBlackRect(self, kernel_size_x, kernel_size_y, threshold, rect):
+    def expandBlackRect(self, kernel_size_x, kernel_size_y, threshold):
         il, ir, jl, jr = (None, None, None, None)
 
         if (kernel_size_x % 2 == 1):
@@ -153,32 +122,27 @@ class BeautifyMap:
             jr = kernel_size_y >> 1
             jl = 1 - jr
 
-        dst = []
+        dst = [127] * len(self.map)
 
-        for i in range(self.size_y):
-            for j in range(self.size_x):
-                dst.append(127)
-
-        for _i in range(rect["y"], rect["y"] + rect["width"]):
-            for _j in range(rect["x"], rect["x"] + rect["height"]):
-                if (self.map[_i * self.size_x + _j] < threshold):
+        for i in range(self.tRect["y"], self.tRect["y"] + self.tRect["width"]):
+            for j in range(self.tRect["x"], self.tRect["x"] + self.tRect["height"]):
+                if (self.map[i * self.size_x + j] < threshold):
                     for di in range(il, ir + 1):
                         for dj in range(jl, jr + 1):
-                            if (_i + di < 0 or _i + di >= rect["y"] + rect["width"] or _j + dj < 0 or _j + dj >= rect["x"] + rect["height"]):
+                            if (i + di < 0 or i + di >= self.tRect["y"] + self.tRect["width"] or j + dj < 0 or j + dj >= self.tRect["x"] + self.tRect["height"]):
                                 continue
 
-                            if (dst[(_i + di) * self.size_x + _j + dj] > self.map[_i * self.size_x + _j]):
-                                dst[(_i + di) * self.size_x + _j +
-                                    dj] = self.map[_i * self.size_x + _j]
+                            if (dst[(i + di) * self.size_x + j + dj] > self.map[i * self.size_x + j]):
+                                dst[(i + di) * self.size_x + j +
+                                    dj] = self.map[i * self.size_x + j]
 
-        for _i2 in range(self.size_y):
-            for _j2 in range(self.size_x):
-                if (dst[_i2 * self.size_x + _j2] == 127):
-                    dst[_i2 * self.size_x + _j2] = self.map[_i2 * self.size_x + _j2]
+        for offset in range(len(self.map)):
+            if (dst[offset] == 127):
+                dst[offset] = self.map[offset]
 
         self.map = dst
 
-    def expandWhiteRect(self, kernel_size_x, kernel_size_y, threshold, rect):
+    def expandWhiteRect(self, kernel_size_x, kernel_size_y, threshold):
         il, ir, jl, jr = (None, None, None, None)
 
         if (kernel_size_x % 2 == 1):
@@ -195,63 +159,56 @@ class BeautifyMap:
             jr = kernel_size_y >> 1
             jl = 1 - jr
 
-        dst = []
+        dst = [-128] * len(self.map)
 
-        for i in range(self.size_y):
-            for j in range(self.size_x):
-                dst.append(-128)
-
-        for _i3 in range(rect["y"], rect["y"] + rect["width"]):
-            for _j3 in range(rect["x"], rect["x"] + rect["height"]):
-                if (self.map[_i3 * self.size_x + _j3] > threshold):
+        for i in range(self.tRect["y"], self.tRect["y"] + self.tRect["width"]):
+            for j in range(self.tRect["x"], self.tRect["x"] + self.tRect["height"]):
+                if (self.map[i * self.size_x + j] > threshold):
                     for di in range(il, ir + 1):
                         for dj in range(jl, jr + 1):
-                            if (_i3 + di < 0 or _i3 + di >= rect["y"] + rect["width"] or _j3 + dj < 0 or _j3 + dj >= rect["x"] + rect["height"]):
+                            if (i + di < 0 or i + di >= self.tRect["y"] + self.tRect["width"] or j + dj < 0 or j + dj >= self.tRect["x"] + self.tRect["height"]):
                                 continue
 
-                            if (dst[(_i3 + di) * self.size_x + _j3 + dj] < self.map[_i3 * self.size_x + _j3] and self.map[(_i3 + di) * self.size_x + _j3 + dj] < threshold):
-                                dst[(_i3 + di) * self.size_x + _j3 +
-                                    dj] = self.map[_i3 * self.size_x + _j3]
+                            if (dst[(i + di) * self.size_x + j + dj] < self.map[i * self.size_x + j] and self.map[(i + di) * self.size_x + j + dj] < threshold):
+                                dst[(i + di) * self.size_x + j +
+                                    dj] = self.map[i * self.size_x + j]
 
-        for _i4 in range(self.size_y):
-            for _j4 in range(self.size_x):
-                if (dst[_i4 * self.size_x + _j4] == -128):
-                    dst[_i4 * self.size_x + _j4] = self.map[_i4 * self.size_x + _j4]
+        for offset in range(len(self.map)):
+            if (dst[offset] == -128):
+                dst[offset] = self.map[offset]
 
         self.map = dst
 
-    def refineBoundary(self, threshold_black, threshold_white, rect):
-        Qx = []
-        Qy = []
+    def refineBoundary(self, threshold_black, threshold_white):
+        points = []
         hasWhiteNeighbor = None
 
-        for i in range(rect["y"], rect["y"] + rect["width"]):
-            for j in range(rect["x"], rect["x"] + rect["height"]):
+        for i in range(self.tRect["y"], self.tRect["y"] + self.tRect["width"]):
+            for j in range(self.tRect["x"], self.tRect["x"] + self.tRect["height"]):
                 if (self.map[i * self.size_x + j] < threshold_black):
                     hasWhiteNeighbor = False
 
                     for di in range(-1, 2):
                         for dj in range(-1, 2):
-                            if (i + di < 0 or i + di >= rect["y"] + rect["width"] or j + dj < 0 or j + dj >= rect["x"] + rect["height"]):
+                            if (i + di < 0 or i + di >= self.tRect["y"] + self.tRect["width"] or j + dj < 0 or j + dj >= self.tRect["x"] + self.tRect["height"]):
                                 continue
 
                             if (self.map[(i + di) * self.size_x + j + dj] > threshold_white):
                                 hasWhiteNeighbor = True
 
                     if (not hasWhiteNeighbor):
-                        Qx.append(i)
-                        Qy.append(j)
+                        points.append((i, j))
 
-        for _i5 in range(len(Qx)):
-            self.map[Qx[_i5] * self.size_x + Qy[_i5]] = 0
+        for x, y in points:
+            self.map[x * self.size_x + y] = 0
 
-    def eliminateNonBoundaryNoise(self, nonBoundaryNoise, rect, noise_color, border_color, outer_border_color):
+    def eliminateNonBoundaryNoise(self, nonBoundaryNoise, noise_color, border_color, outer_border_color):
         tempnonBoundaryNoise = nonBoundaryNoise
 
-        for i in range(rect["y"], rect["y"] + rect["width"]):
-            for j in range(rect["x"], rect["x"] + rect["height"]):
+        for i in range(self.tRect["y"], self.tRect["y"] + self.tRect["width"]):
+            for j in range(self.tRect["x"], self.tRect["x"] + self.tRect["height"]):
                 if (self.map[i * self.size_x + j] == border_color):
-                    if (i - 1 < 0 or i + 1 >= rect["y"] + rect["width"] or j - 1 < 0 or j + 1 >= rect["x"] + rect["height"]):
+                    if (i - 1 < 0 or i + 1 >= self.tRect["y"] + self.tRect["width"] or j - 1 < 0 or j + 1 >= self.tRect["x"] + self.tRect["height"]):
                         continue
 
                     if (self.map[(i - 1) * self.size_x + j] != outer_border_color and self.map[(i + 1) * self.size_x + j] != outer_border_color and self.map[i * self.size_x + j - 1] != outer_border_color and self.map[i * self.size_x + j + 1] != outer_border_color and self.map[(i - 1) * self.size_x + j - 1] != outer_border_color and self.map[(i - 1) * self.size_x + j + 1] != outer_border_color and self.map[(i + 1) * self.size_x + j - 1] != outer_border_color and self.map[(i + 1) * self.size_x + j + 1] != outer_border_color):
@@ -260,118 +217,82 @@ class BeautifyMap:
 
         return tempnonBoundaryNoise
 
-    def expandSingleConvexBoundary(self, external_corner_value, fill_value, valid_length, times, rect):
-        contour = []
-        contour_map = self.map
-        result = self.extractExternalContoursNewStrategy(
-            contour_map, contour, rect)
+    def expandSingleConvexBoundary(self, external_corner_value, fill_value, valid_length, times):
+        contour = self.extractExternalContoursNewStrategy([])
 
-        for i in range(times):
-            inner_corners = []
-            extract_corners = []
+        for _ in range(times):
             fill_edges = []
             inner_corner_value = external_corner_value + 5
             four_neighbourhood = [[-1, 0], [1, 0], [0, -1], [0, 1]]
-            delete_point = []
-            contour_map = result["temp_map"]
-            contour = result["contour"]
-            corner_map = self.map
-            result1 = self.extractCorners(
-                corner_map, extract_corners, inner_corners, contour, external_corner_value, inner_corner_value, rect)
-            result2 = {
-                "delete_point": [],
-                "fill_edges": []
-            }
-            for it in result1["extract_corners"]:
+
+            extract_corner = self.extractCorners(
+                [], contour, external_corner_value, inner_corner_value)
+
+            for p in extract_corner:
                 is_valid_length = False
-                p_oint = it
 
                 for k in range(4):
-                    temp_idy = p_oint.x + four_neighbourhood[k][0]
-                    temp_idx = p_oint.y + four_neighbourhood[k][1]
+                    currpoint = Point(
+                        p.x + four_neighbourhood[k][0], p.y + four_neighbourhood[k][1])
 
-                    if (temp_idy < rect["y"] or temp_idy >= rect["y"] + rect["width"] or temp_idx < rect["x"] or temp_idx >= rect["x"] + rect["height"]):
+                    if (currpoint.x < self.tRect["y"] or currpoint.x >= self.tRect["y"] + self.tRect["width"] or currpoint.y < self.tRect["x"] or currpoint.y >= self.tRect["x"] + self.tRect["height"]):
                         continue
 
-                    if (result1["corner_map"][temp_idy * self.size_x + temp_idx] == inner_corner_value):
-                        near_inner_p_oint = Point(temp_idy, temp_idx)
+                    if (self.map[currpoint.x * self.size_x + currpoint.y] == inner_corner_value):
                         is_valid_length = self.statisticalLineLength(
-                            result1["corner_map"], near_inner_p_oint, external_corner_value, inner_corner_value, fill_value, valid_length, rect)
+                            currpoint, external_corner_value, inner_corner_value, valid_length)
                         break
 
                     if (k == 3):
                         is_valid_length = True
 
-                result2 = self.fourNeighbourhoodSearchForExtractCorners(
-                    result1["corner_map"], p_oint, fill_edges, delete_point, external_corner_value, inner_corner_value, fill_value, valid_length, is_valid_length, rect)
-                fill_edges = result2["fill_edges"]
-            # array = self.updateContour(contour, result2["delete_point"])
-            array = contour
-            tempContour = self.fillEdges(
-                self.map, result1["extract_corners"], array, fill_edges, fill_value)
-            contour = tempContour
-            delete_point = []
-            extract_corners = []
-            fill_edges = []
+                _, fill_edges = self.fourNeighbourhoodSearchForExtractCorners(
+                    p, [], [], external_corner_value, inner_corner_value, valid_length, is_valid_length)
 
-        contour = []
+            contour = self.fillEdges(contour, fill_edges, fill_value)
 
-    def extractExternalContoursNewStrategy(self, temp_map, contour, rect):
-        gray_region = []
-        result = self.findGrayConnectComponent(temp_map, gray_region, rect)
-        gray_region = result["gray_region"]
-        temp_map = result["temp_map"]
-        result1 = self.findExternalContoursNewStrategy(
-            temp_map, gray_region, contour, rect)
-        return {
-            "temp_map": result1["temp_map"],
-            "contour": result1["contour"]
-        }
+    def extractExternalContoursNewStrategy(self, contour):
+        gray_region = self.findGrayConnectComponent([])
+        return self.findExternalContoursNewStrategy(gray_region, contour)
 
-    def findGrayConnectComponent(self, temp_map, gray_region, rect):
+    def findGrayConnectComponent(self, gray_region) -> tuple[list[Point], list[int]]:
         four_neighbourhood = [[-1, 0], [0, 1], [1, 0], [0, -1]]
         findOnePoint = False
 
-        for idy in range(rect["y"], rect["y"] + rect["width"]):
-            for idx in range(rect["x"], rect["x"] + rect["height"]):
-                if (temp_map[idy * self.size_x + idx] == 0):
+        for y in range(self.tRect["y"], self.tRect["y"] + self.tRect["width"]):
+            for x in range(self.tRect["x"], self.tRect["x"] + self.tRect["height"]):
+                if (self.map[y * self.size_x + x] == 0):
                     findOnePoint = True
-                    p_oint_for_search = []
-                    gray_region.append(Point(idy, idx))
-                    p_oint_for_search.append(Point(idy, idx))
-                    temp_map[idy * self.size_x + idx] = 30
+                    points_for_search = [Point(y, x)]
+                    gray_region.append(Point(y, x))
+                    self.map[y * self.size_x + x] = 30
 
-                    while (len(p_oint_for_search) > 0):
-                        seed = p_oint_for_search[0]
-                        p_oint_for_search.pop(0)
+                    while (len(points_for_search) > 0):
+                        seed = points_for_search.pop(0)
 
                         for k in range(4):
-                            temp_idy = seed.x + four_neighbourhood[k][0]
-                            temp_idx = seed.y + four_neighbourhood[k][1]
+                            currpoint = Point(
+                                seed.x + four_neighbourhood[k][0], seed.y + four_neighbourhood[k][1])
 
-                            if (temp_idy < rect["y"] or temp_idy >= rect["y"] + rect["width"] or temp_idx < rect["x"] or temp_idx >= rect["x"] + rect["height"]):
+                            if (currpoint.x < self.tRect["y"] or currpoint.x >= self.tRect["y"] + self.tRect["width"] or currpoint.y < self.tRect["x"] or currpoint.y >= self.tRect["x"] + self.tRect["height"]):
                                 continue
 
-                            if (temp_map[temp_idy * self.size_x + temp_idx] == 0):
-                                temp_map[temp_idy *
-                                         self.size_x + temp_idx] = 30
-                                p_oint_for_search.append(
-                                    Point(temp_idy, temp_idx))
-                                gray_region.append(Point(temp_idy, temp_idx))
+                            if (self.map[currpoint.x * self.size_x + currpoint.y] == 0):
+                                self.map[currpoint.x *
+                                         self.size_x + currpoint.y] = 30
+                                points_for_search.append(currpoint)
+                                gray_region.append(currpoint)
 
-                if (findOnePoint):
+                if findOnePoint:
                     break
 
-            if (findOnePoint):
+            if findOnePoint:
                 findOnePoint = False
                 break
 
-        return {
-            "gray_region": gray_region,
-            "temp_map": temp_map
-        }
+        return gray_region
 
-    def findExternalContoursNewStrategy(self, temp_map, gray_region, contour, rect):
+    def findExternalContoursNewStrategy(self, gray_region, contour) -> list[Point]:
         eight_neighbourhood = [[-1, 0], [1, 0], [0, -1],
                                [0, 1], [-1, 1], [1, 1], [1, -1], [-1, -1]]
 
@@ -380,19 +301,16 @@ class BeautifyMap:
                 temp_idy = gray_region[i].x + eight_neighbourhood[k][0]
                 temp_idx = gray_region[i].y + eight_neighbourhood[k][1]
 
-                if (temp_idy < rect["y"] or temp_idy >= rect["y"] + rect["width"] or temp_idx < rect["x"] or temp_idx >= rect["x"] + rect["height"]):
+                if (temp_idy < self.tRect["y"] or temp_idy >= self.tRect["y"] + self.tRect["width"] or temp_idx < self.tRect["x"] or temp_idx >= self.tRect["x"] + self.tRect["height"]):
                     continue
 
-                if (temp_map[temp_idy * self.size_x + temp_idx] == -128):
-                    temp_map[temp_idy * self.size_x + temp_idx] = 40
+                if (self.map[temp_idy * self.size_x + temp_idx] == -128):
+                    self.map[temp_idy * self.size_x + temp_idx] = 40
                     contour.append(Point(temp_idy, temp_idx))
 
-        return {
-            "temp_map": temp_map,
-            "contour": contour
-        }
+        return contour
 
-    def extractCorners(self, corner_map, extract_corner, inner_corner, contour, external_corner_value, inner_corner_value, rect):
+    def extractCorners(self, extract_corner, contour, external_corner_value, inner_corner_value):
         four_neighbourhood = [[-1, 0], [0, 1], [1, 0], [0, -1]]
 
         for i in range(len(contour)):
@@ -401,53 +319,50 @@ class BeautifyMap:
             gray_count = 0
 
             for k in range(4):
-                temp_idy = contour[i].x + four_neighbourhood[k][0]
-                temp_idx = contour[i].y + four_neighbourhood[k][1]
+                currpoint = Point(
+                    contour[i].x + four_neighbourhood[k][0], contour[i].y + four_neighbourhood[k][1])
 
-                if (temp_idy < rect["y"] or temp_idy >= rect["y"] + rect["width"] or temp_idx < rect["x"] or temp_idx >= rect["x"] + rect["height"]):
+                if (currpoint.x < self.tRect["y"] or currpoint.x >= self.tRect["y"] + self.tRect["width"] or currpoint.y < self.tRect["x"] or currpoint.y >= self.tRect["x"] + self.tRect["height"]):
                     continue
 
-                if (self.map[temp_idy * self.size_x + temp_idx] == -128):
+                if (self.map[currpoint.x * self.size_x + currpoint.y] == -128):
                     black_count += 1
-                elif (self.map[temp_idy * self.size_x + temp_idx] == 0):
+                elif (self.map[currpoint.x * self.size_x + currpoint.y] == 0):
                     gray_count += 1
-                elif (self.map[temp_idy * self.size_x + temp_idx] == 127):
+                elif (self.map[currpoint.x * self.size_x + currpoint.y] == 127):
                     white_count += 1
 
                 if (gray_count == 2 and black_count == 2):
-                    extract_corner.append(Point(contour[i].x, contour[i].y))
-                    corner_map[contour[i].x * self.size_x +
-                               contour[i].y] = external_corner_value
+                    extract_corner.append(currpoint)
+                    self.map[contour[i].x * self.size_x +
+                             contour[i].y] = external_corner_value
                 elif (white_count == 2 and black_count == 2):
-                    corner_map[contour[i].x * self.size_x +
-                               contour[i].y] = inner_corner_value
+                    self.map[contour[i].x * self.size_x +
+                             contour[i].y] = inner_corner_value
 
-        return {
-            "corner_map": corner_map,
-            "extract_corners": extract_corner
-        }
+        return extract_corner
 
-    def statisticalLineLength(self, temp_map, p_oint, external_corner_value, inner_corner_value, fill_value, valid_length, rect):
-        if (self.upSearchStatisticalLineLength(temp_map, p_oint, external_corner_value, inner_corner_value, fill_value, valid_length, rect)):
+    def statisticalLineLength(self, point, external_corner_value, inner_corner_value, valid_length):
+        if (self.upSearchStatisticalLineLength(point, external_corner_value, inner_corner_value, valid_length)):
             return True
-        elif (self.downSearchStatisticalLineLength(temp_map, p_oint, external_corner_value, inner_corner_value, fill_value, valid_length, rect)):
+        elif (self.downSearchStatisticalLineLength(point, external_corner_value, inner_corner_value, valid_length)):
             return True
-        elif (self.leftSearchStatisticalLineLength(temp_map, p_oint, external_corner_value, inner_corner_value, fill_value, valid_length, rect)):
+        elif (self.leftSearchStatisticalLineLength(point, external_corner_value, inner_corner_value, valid_length)):
             return True
-        elif (self.rightSearchStatisticalLineLength(temp_map, p_oint, external_corner_value, inner_corner_value, fill_value, valid_length, rect)):
+        elif (self.rightSearchStatisticalLineLength(point, external_corner_value, inner_corner_value, valid_length)):
             return True
 
         return False
 
-    def upSearchStatisticalLineLength(self, temp_map, p_oint, external_corner_value, inner_corner_value, fill_value, valid_length, rect):
-        if (p_oint.x + 1 < rect["y"] + rect["width"] and self.map[(p_oint.x + 1) * self.size_x + p_oint.y] == 127):
-            idy = p_oint.x + 1
-            idx = p_oint.y
+    def upSearchStatisticalLineLength(self, point, external_corner_value, inner_corner_value, valid_length):
+        if (point.x + 1 < self.tRect["y"] + self.tRect["width"] and self.map[(point.x + 1) * self.size_x + point.y] == 127):
+            idy = point.x + 1
+            idx = point.y
             line = []
             line.append(Point(idy, idx))
 
-            for j in range(idy, rect["y"] + rect["width"]):
-                if (temp_map[j * self.size_x + idx] == 127):
+            for j in range(idy, self.tRect["y"] + self.tRect["width"]):
+                if (self.map[j * self.size_x + idx] == 127):
                     black_count = 0
                     left_and_right_neighbourhood = [[0, -1], [0, 1]]
 
@@ -455,10 +370,10 @@ class BeautifyMap:
                         tmp_idy = j + left_and_right_neighbourhood[k][0]
                         tmp_idx = idx + left_and_right_neighbourhood[k][1]
 
-                        if (tmp_idx < rect["x"] or tmp_idx >= rect["x"] + rect["height"] or tmp_idy < rect["y"] or tmp_idy >= rect["y"] + rect["width"]):
+                        if (tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"] or tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"]):
                             continue
 
-                        if (temp_map[tmp_idy * self.size_x + tmp_idx] == -128 or temp_map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value or temp_map[tmp_idy * self.size_x + tmp_idx] == external_corner_value):
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value or self.map[tmp_idy * self.size_x + tmp_idx] == external_corner_value):
                             black_count += 1
 
                     if (black_count == 1):
@@ -475,15 +390,15 @@ class BeautifyMap:
 
         return False
 
-    def downSearchStatisticalLineLength(self, temp_map, p_oint, external_corner_value, inner_corner_value, fill_value, valid_length, rect):
-        if (p_oint.x - 1 > rect["y"] and self.map[(p_oint.x - 1) * self.size_x + p_oint.y] == 127):
-            idy = p_oint.x - 1
-            idx = p_oint.y
+    def downSearchStatisticalLineLength(self, point, external_corner_value, inner_corner_value, valid_length):
+        if (point.x - 1 > self.tRect["y"] and self.map[(point.x - 1) * self.size_x + point.y] == 127):
+            idy = point.x - 1
+            idx = point.y
             line = []
             line.append(Point(idy, idx))
 
-            for j in range(idy, rect["y"], -1):
-                if (temp_map[j * self.size_x + idx] == 127):
+            for j in range(idy, self.tRect["y"], -1):
+                if (self.map[j * self.size_x + idx] == 127):
                     black_count = 0
                     left_and_right_neighbourhood = [[0, -1], [0, 1]]
 
@@ -491,10 +406,10 @@ class BeautifyMap:
                         tmp_idy = j + left_and_right_neighbourhood[k][0]
                         tmp_idx = idx + left_and_right_neighbourhood[k][1]
 
-                        if (tmp_idy < rect["y"] or tmp_idy >= rect["y"] + rect["width"] or tmp_idx < rect["x"] or tmp_idx >= rect["x"] + rect["height"]):
+                        if (tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"] or tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"]):
                             continue
 
-                        if (temp_map[tmp_idy * self.size_x + tmp_idx] == -128 or temp_map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value or temp_map[tmp_idy * self.size_x + tmp_idx] == external_corner_value):
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value or self.map[tmp_idy * self.size_x + tmp_idx] == external_corner_value):
                             black_count += 1
 
                     if (black_count == 1):
@@ -510,15 +425,15 @@ class BeautifyMap:
                 return False
         return False
 
-    def leftSearchStatisticalLineLength(self, temp_map, p_oint, external_corner_value, inner_corner_value, fill_value, valid_length, rect):
-        if (p_oint.y + 1 < rect["x"] + rect["height"] and self.map[p_oint.x * self.size_x + p_oint.y + 1] == 127):
-            idy = p_oint.x
-            idx = p_oint.y + 1
+    def leftSearchStatisticalLineLength(self, point, external_corner_value, inner_corner_value, valid_length):
+        if (point.y + 1 < self.tRect["x"] + self.tRect["height"] and self.map[point.x * self.size_x + point.y + 1] == 127):
+            idy = point.x
+            idx = point.y + 1
             line = []
             line.append(Point(idy, idx))
 
-            for j in range(idx, rect["x"] + rect["height"]):
-                if (temp_map[idy * self.size_x + j] == 127):
+            for j in range(idx, self.tRect["x"] + self.tRect["height"]):
+                if (self.map[idy * self.size_x + j] == 127):
                     black_count = 0
                     up_and_down_neighbourhood = [[-1, 0], [1, 0]]
 
@@ -526,10 +441,10 @@ class BeautifyMap:
                         tmp_idy = idy + up_and_down_neighbourhood[k][0]
                         tmp_idx = j + up_and_down_neighbourhood[k][1]
 
-                        if (tmp_idy < rect["y"] or tmp_idy >= rect["y"] + rect["width"] or tmp_idx < rect["x"] or tmp_idx >= rect["x"] + rect["height"]):
+                        if (tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"] or tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"]):
                             continue
 
-                        if (temp_map[tmp_idy * self.size_x + tmp_idx] == -128 or temp_map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value or temp_map[tmp_idy * self.size_x + tmp_idx] == external_corner_value):
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value or self.map[tmp_idy * self.size_x + tmp_idx] == external_corner_value):
                             black_count += 1
 
                     if (black_count == 1):
@@ -545,15 +460,15 @@ class BeautifyMap:
                 return False
         return False
 
-    def rightSearchStatisticalLineLength(self, temp_map, p_oint, external_corner_value, inner_corner_value, fill_value, valid_length, rect):
-        if (p_oint.y - 1 > rect["x"] and self.map[p_oint.x * self.size_x + p_oint.y - 1] == 127):
-            idy = p_oint.x
-            idx = p_oint.y - 1
+    def rightSearchStatisticalLineLength(self, point, external_corner_value, inner_corner_value, valid_length):
+        if (point.y - 1 > self.tRect["x"] and self.map[point.x * self.size_x + point.y - 1] == 127):
+            idy = point.x
+            idx = point.y - 1
             line = []
             line.append(Point(idy, idx))
 
-            for j in range(idx, rect["x"], -1):
-                if (temp_map[idy * self.size_x + j] == 127):
+            for j in range(idx, self.tRect["x"], -1):
+                if (self.map[idy * self.size_x + j] == 127):
                     black_count = 0
                     up_and_down_neighbourhood = [[-1, 0], [1, 0]]
 
@@ -561,10 +476,10 @@ class BeautifyMap:
                         tmp_idy = idy + up_and_down_neighbourhood[k][0]
                         tmp_idx = j + up_and_down_neighbourhood[k][1]
 
-                        if (tmp_idx < rect["x"] or tmp_idx >= rect["x"] + rect["height"] or tmp_idy < rect["y"] or tmp_idy >= rect["y"] + rect["width"]):
+                        if (tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"] or tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"]):
                             continue
 
-                        if (temp_map[tmp_idy * self.size_x + tmp_idx] == -128 or temp_map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value or temp_map[tmp_idy * self.size_x + tmp_idx] == external_corner_value):
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value or self.map[tmp_idy * self.size_x + tmp_idx] == external_corner_value):
                             black_count += 1
 
                     if (black_count == 1):
@@ -581,26 +496,26 @@ class BeautifyMap:
 
         return False
 
-    def fourNeighbourhoodSearchForExtractCorners(self, temp_map, p_oint, fill_edges, delete_point, external_corner_value, inner_corner_value, fill_value, valid_length, is_valid_length, rect):
-        result1 = self.upSearchForExtractCorners(temp_map, p_oint, fill_edges, delete_point,
-                                                 external_corner_value, inner_corner_value, fill_value, valid_length, is_valid_length, rect)
-        result2 = self.downSearchForExtractCorners(
-            temp_map, p_oint, result1["fill_edges"], result1["delete_point"], external_corner_value, inner_corner_value, fill_value, valid_length, is_valid_length, rect)
-        result3 = self.leftSearchForExtractCorners(
-            temp_map, p_oint, result2["fill_edges"], result2["delete_point"], external_corner_value, inner_corner_value, fill_value, valid_length, is_valid_length, rect)
-        result4 = self.rightSearchForExtractCorners(
-            temp_map, p_oint, result3["fill_edges"], result3["delete_point"], external_corner_value, inner_corner_value, fill_value, valid_length, is_valid_length, rect)
-        return result4
+    def fourNeighbourhoodSearchForExtractCorners(self, point, fill_edges, delete_point, external_corner_value, inner_corner_value, valid_length, is_valid_length) -> tuple[list[Point], list[Point]]:
+        delete_point, fill_edges = self.upSearchForExtractCorners(point, fill_edges, delete_point,
+                                                                  external_corner_value, inner_corner_value, valid_length, is_valid_length)
+        delete_point, fill_edges = self.downSearchForExtractCorners(
+            point, fill_edges, delete_point, external_corner_value, inner_corner_value, valid_length, is_valid_length)
+        delete_point, fill_edges = self.leftSearchForExtractCorners(
+            point, fill_edges, delete_point, external_corner_value, inner_corner_value, valid_length, is_valid_length)
+        delete_point, fill_edges = self.rightSearchForExtractCorners(
+            point, fill_edges, delete_point, external_corner_value, inner_corner_value, valid_length, is_valid_length)
+        return delete_point, fill_edges
 
-    def upSearchForExtractCorners(self, temp_map, p_oint, fill_edges, delete_point, external_corner_value, inner_corner_value, fill_value, valid_length, is_valid_length, rect):
-        if (p_oint.x + 1 < rect["y"] + rect["width"] and self.map[(p_oint.x + 1) * self.size_x + p_oint.y] == 0):
-            idy = p_oint.x + 1
-            idx = p_oint.y
+    def upSearchForExtractCorners(self, point, fill_edges, delete_point, external_corner_value, inner_corner_value, valid_length, is_valid_length) -> tuple[list[Point], list[Point]]:
+        if (point.x + 1 < self.tRect["y"] + self.tRect["width"] and self.map[(point.x + 1) * self.size_x + point.y] == 0):
+            idy = point.x + 1
+            idx = point.y
             line = []
             line.append(Point(idy, idx))
 
-            for j in range(idy, rect["y"] + rect["width"]):
-                if (temp_map[j * self.size_x + idx] == 0):
+            for j in range(idy, self.tRect["y"] + self.tRect["width"]):
+                if (self.map[j * self.size_x + idx] == 0):
                     black_count = 0
                     left_and_right_neighbourhood = [[0, -1], [0, 1]]
 
@@ -608,10 +523,10 @@ class BeautifyMap:
                         tmp_idy = j + left_and_right_neighbourhood[k][0]
                         tmp_idx = idx + left_and_right_neighbourhood[k][1]
 
-                        if (tmp_idx < rect["x"] or tmp_idx >= rect["x"] + rect["height"] or tmp_idy < rect["y"] or tmp_idy >= rect["y"] + rect["width"]):
+                        if (tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"] or tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"]):
                             continue
 
-                        if (temp_map[tmp_idy * self.size_x + tmp_idx] == -128 or temp_map[tmp_idy * self.size_x + tmp_idx] == external_corner_value or temp_map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == external_corner_value or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
                             black_count += 1
 
                     if (black_count == 1):
@@ -622,62 +537,57 @@ class BeautifyMap:
                     break
 
             if (is_valid_length and len(line) > 1):
-                line.append(p_oint)
+                line.append(point)
                 fill_edges.append(line)
 
                 for i in range(len(line)):
                     _left_and_right_neighbourhood = [[0, -1], [0, 1]]
 
-                    for _k in range(2):
-                        _tmp_idy = line[i].x + \
-                            _left_and_right_neighbourhood[_k][0]
+                    for k in range(2):
+                        tmp_idy = line[i].x + \
+                            _left_and_right_neighbourhood[k][0]
+                        tmp_idx = line[i].y + \
+                            _left_and_right_neighbourhood[k][1]
 
-                        _tmp_idx = line[i].y + \
-                            _left_and_right_neighbourhood[_k][1]
-
-                        if (_tmp_idx < rect["x"] or _tmp_idx >= rect["x"] + rect["height"] or _tmp_idy < rect["y"] or _tmp_idy >= rect["y"] + rect["width"]):
+                        if (tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"] or tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"]):
                             continue
 
-                        if (temp_map[_tmp_idy * self.size_x + _tmp_idx] == -128 or temp_map[_tmp_idy * self.size_x + _tmp_idx] == inner_corner_value):
-                            self.map[_tmp_idy * self.size_x + _tmp_idx] = 127
-                            delete_point.append(Point(_tmp_idy, _tmp_idx))
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
+                            self.map[tmp_idy * self.size_x + tmp_idx] = 127
+                            delete_point.append(Point(tmp_idy, tmp_idx))
             elif (len(line) > valid_length):
-                line.append(p_oint)
+                line.append(point)
                 fill_edges.append(line)
 
-                for _i6 in range(len(line)):
+                for i in range(len(line)):
                     _left_and_right_neighbourhood2 = [[0, -1], [0, 1]]
 
-                    for _k2 in range(2):
-                        _tmp_idy2 = line[_i6].x + \
-                            _left_and_right_neighbourhood2[_k2][0]
+                    for k in range(2):
+                        tmp_idy = line[i].x + \
+                            _left_and_right_neighbourhood2[k][0]
+                        tmp_idx = line[i].y + \
+                            _left_and_right_neighbourhood2[k][1]
 
-                        _tmp_idx2 = line[_i6].y + \
-                            _left_and_right_neighbourhood2[_k2][1]
-
-                        if (_tmp_idx2 < rect["x"] or _tmp_idx2 >= rect["x"] + rect["height"] or _tmp_idy2 < rect["y"] or _tmp_idy2 >= rect["y"] + rect["width"]):
+                        if (tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"] or tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"]):
                             continue
 
-                        if (temp_map[_tmp_idy2 * self.size_x + _tmp_idx2] == -128 or temp_map[_tmp_idy2 * self.size_x + _tmp_idx2] == inner_corner_value):
-                            self.map[_tmp_idy2 * self.size_x + _tmp_idx2] = 127
-                            delete_point.append(Point(_tmp_idy2, _tmp_idx2))
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
+                            self.map[tmp_idy * self.size_x + tmp_idx] = 127
+                            delete_point.append(Point(tmp_idy, tmp_idx))
             else:
                 line = []
 
-        return {
-            "delete_point": delete_point,
-            "fill_edges": fill_edges
-        }
+        return delete_point, fill_edges
 
-    def downSearchForExtractCorners(self, temp_map, p_oint, fill_edges, delete_point, external_corner_value, inner_corner_value, fill_value, valid_length, is_valid_length, rect):
-        if (p_oint.x - 1 > rect["y"] and self.map[(p_oint.x - 1) * self.size_x + p_oint.y] == 0):
-            idy = p_oint.x - 1
-            idx = p_oint.y
+    def downSearchForExtractCorners(self, point, fill_edges, delete_point, external_corner_value, inner_corner_value, valid_length, is_valid_length) -> tuple[list[Point], list[Point]]:
+        if (point.x - 1 > self.tRect["y"] and self.map[(point.x - 1) * self.size_x + point.y] == 0):
+            idy = point.x - 1
+            idx = point.y
             line = []
             line.append(Point(idy, idx))
 
-            for j in range(idy, rect["y"], -1):
-                if (temp_map[j * self.size_x + idx] == 0):
+            for j in range(idy, self.tRect["y"], -1):
+                if (self.map[j * self.size_x + idx] == 0):
                     black_count = 0
                     left_and_right_neighbourhood = [[0, -1], [0, 1]]
 
@@ -685,10 +595,10 @@ class BeautifyMap:
                         tmp_idy = j + left_and_right_neighbourhood[k][0]
                         tmp_idx = idx + left_and_right_neighbourhood[k][1]
 
-                        if (tmp_idy < rect["y"] or tmp_idy >= rect["y"] + rect["width"] or tmp_idx < rect["x"] or tmp_idx >= rect["x"] + rect["height"]):
+                        if (tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"] or tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"]):
                             continue
 
-                        if (temp_map[tmp_idy * self.size_x + tmp_idx] == -128 or temp_map[tmp_idy * self.size_x + tmp_idx] == external_corner_value or temp_map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == external_corner_value or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
                             black_count += 1
 
                     if (black_count == 1):
@@ -699,62 +609,57 @@ class BeautifyMap:
                     break
 
             if (is_valid_length and len(line) > 1):
-                line.append(p_oint)
+                line.append(point)
                 fill_edges.append(line)
 
                 for i in range(len(line)):
                     _left_and_right_neighbourhood3 = [[0, -1], [0, 1]]
 
-                    for _k3 in range(2):
-                        _tmp_idy3 = line[i].x + \
-                            _left_and_right_neighbourhood3[_k3][0]
+                    for k in range(2):
+                        tmp_idy = line[i].x + \
+                            _left_and_right_neighbourhood3[k][0]
+                        tmp_idx = line[i].y + \
+                            _left_and_right_neighbourhood3[k][1]
 
-                        _tmp_idx3 = line[i].y + \
-                            _left_and_right_neighbourhood3[_k3][1]
-
-                        if (_tmp_idy3 < rect["y"] or _tmp_idy3 >= rect["y"] + rect["width"] or _tmp_idx3 < rect["x"] or _tmp_idx3 >= rect["x"] + rect["height"]):
+                        if (tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"] or tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"]):
                             continue
 
-                        if (temp_map[_tmp_idy3 * self.size_x + _tmp_idx3] == -128 or temp_map[_tmp_idy3 * self.size_x + _tmp_idx3] == inner_corner_value):
-                            self.map[_tmp_idy3 * self.size_x + _tmp_idx3] = 127
-                            delete_point.append(Point(_tmp_idy3, _tmp_idx3))
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
+                            self.map[tmp_idy * self.size_x + tmp_idx] = 127
+                            delete_point.append(Point(tmp_idy, tmp_idx))
             elif (len(line) > valid_length):
-                line.append(p_oint)
+                line.append(point)
                 fill_edges.append(line)
 
-                for _i7 in range(len(line)):
+                for i in range(len(line)):
                     _left_and_right_neighbourhood4 = [[0, -1], [0, 1]]
 
-                    for _k4 in range(2):
-                        _tmp_idy4 = line[_i7].x + \
-                            _left_and_right_neighbourhood4[_k4][0]
+                    for k in range(2):
+                        tmp_idy = line[i].x + \
+                            _left_and_right_neighbourhood4[k][0]
+                        tmp_idx = line[i].y + \
+                            _left_and_right_neighbourhood4[k][1]
 
-                        _tmp_idx4 = line[_i7].y + \
-                            _left_and_right_neighbourhood4[_k4][1]
-
-                        if (_tmp_idy4 < rect["y"] or _tmp_idy4 >= rect["y"] + rect["width"] or _tmp_idx4 < rect["x"] or _tmp_idx4 >= rect["x"] + rect["height"]):
+                        if (tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"] or tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"]):
                             continue
 
-                        if (temp_map[_tmp_idy4 * self.size_x + _tmp_idx4] == -128 or temp_map[_tmp_idy4 * self.size_x + _tmp_idx4] == inner_corner_value):
-                            self.map[_tmp_idy4 * self.size_x + _tmp_idx4] = 127
-                            delete_point.append(Point(_tmp_idy4, _tmp_idx4))
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
+                            self.map[tmp_idy * self.size_x + tmp_idx] = 127
+                            delete_point.append(Point(tmp_idy, tmp_idx))
             else:
                 line = []
 
-        return {
-            "delete_point": delete_point,
-            "fill_edges": fill_edges
-        }
+        return delete_point, fill_edges
 
-    def leftSearchForExtractCorners(self, temp_map, p_oint, fill_edges, delete_point, external_corner_value, inner_corner_value, fill_value, valid_length, is_valid_length, rect):
-        if (p_oint.y + 1 < rect["x"] + rect["height"] and self.map[p_oint.x * self.size_x + p_oint.y + 1] == 0):
-            idy = p_oint.x
-            idx = p_oint.y + 1
+    def leftSearchForExtractCorners(self, point, fill_edges, delete_point, external_corner_value, inner_corner_value, valid_length, is_valid_length) -> tuple[list[Point], list[Point]]:
+        if (point.y + 1 < self.tRect["x"] + self.tRect["height"] and self.map[point.x * self.size_x + point.y + 1] == 0):
+            idy = point.x
+            idx = point.y + 1
             line = []
             line.append(Point(idy, idx))
 
-            for j in range(idx, rect["x"] + rect["height"]):
-                if (temp_map[idy * self.size_x + j] == 0):
+            for j in range(idx, self.tRect["x"] + self.tRect["height"]):
+                if (self.map[idy * self.size_x + j] == 0):
                     black_count = 0
                     up_and_down_neighbourhood = [[-1, 0], [1, 0]]
 
@@ -762,10 +667,10 @@ class BeautifyMap:
                         tmp_idy = idy + up_and_down_neighbourhood[k][0]
                         tmp_idx = j + up_and_down_neighbourhood[k][1]
 
-                        if (tmp_idy < rect["y"] or tmp_idy >= rect["y"] + rect["width"] or tmp_idx < rect["x"] or tmp_idx >= rect["x"] + rect["height"]):
+                        if (tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"] or tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"]):
                             continue
 
-                        if (temp_map[tmp_idy * self.size_x + tmp_idx] == -128 or temp_map[tmp_idy * self.size_x + tmp_idx] == external_corner_value or temp_map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == external_corner_value or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
                             black_count += 1
 
                     if (black_count == 1):
@@ -776,62 +681,53 @@ class BeautifyMap:
                     break
 
             if (is_valid_length and len(line) > 1):
-                line.append(p_oint)
+                line.append(point)
                 fill_edges.append(line)
 
                 for i in range(len(line)):
                     _up_and_down_neighbourhood = [[-1, 0], [1, 0]]
 
-                    for _k5 in range(2):
-                        _tmp_idy5 = line[i].x + \
-                            _up_and_down_neighbourhood[_k5][0]
+                    for k in range(2):
+                        tmp_idy = line[i].x + _up_and_down_neighbourhood[k][0]
+                        tmp_idx = line[i].y + _up_and_down_neighbourhood[k][1]
 
-                        _tmp_idx5 = line[i].y + \
-                            _up_and_down_neighbourhood[_k5][1]
-
-                        if (_tmp_idy5 < rect["y"] or _tmp_idy5 >= rect["y"] + rect["width"] or _tmp_idx5 < rect["x"] or _tmp_idx5 >= rect["x"] + rect["height"]):
+                        if (tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"] or tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"]):
                             continue
 
-                        if (temp_map[_tmp_idy5 * self.size_x + _tmp_idx5] == -128 or temp_map[_tmp_idy5 * self.size_x + _tmp_idx5] == inner_corner_value):
-                            self.map[_tmp_idy5 * self.size_x + _tmp_idx5] = 127
-                            delete_point.append(Point(_tmp_idy5, _tmp_idx5))
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
+                            self.map[tmp_idy * self.size_x + tmp_idx] = 127
+                            delete_point.append(Point(tmp_idy, tmp_idx))
             elif (len(line) > valid_length):
-                line.append(p_oint)
+                line.append(point)
                 fill_edges.append(line)
 
-                for _i8 in range(len(line)):
+                for i in range(len(line)):
                     _up_and_down_neighbourhood2 = [[-1, 0], [1, 0]]
 
-                    for _k6 in range(2):
-                        _tmp_idy6 = line[_i8].x + \
-                            _up_and_down_neighbourhood2[_k6][0]
+                    for k in range(2):
+                        tmp_idy = line[i].x + _up_and_down_neighbourhood2[k][0]
+                        tmp_idx = line[i].y + _up_and_down_neighbourhood2[k][1]
 
-                        _tmp_idx6 = line[_i8].y + \
-                            _up_and_down_neighbourhood2[_k6][1]
-
-                        if (_tmp_idy6 < rect["y"] or _tmp_idy6 >= rect["y"] + rect["width"] or _tmp_idx6 < rect["x"] or _tmp_idx6 >= rect["x"] + rect["height"]):
+                        if (tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"] or tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"]):
                             continue
 
-                        if (temp_map[_tmp_idy6 * self.size_x + _tmp_idx6] == -128 or temp_map[_tmp_idy6 * self.size_x + _tmp_idx6] == inner_corner_value):
-                            self.map[_tmp_idy6 * self.size_x + _tmp_idx6] = 127
-                            delete_point.append(Point(_tmp_idy6, _tmp_idx6))
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
+                            self.map[tmp_idy * self.size_x + tmp_idx] = 127
+                            delete_point.append(Point(tmp_idy, tmp_idx))
             else:
                 line = []
 
-        return {
-            "delete_point": delete_point,
-            "fill_edges": fill_edges
-        }
+        return delete_point, fill_edges
 
-    def rightSearchForExtractCorners(self, temp_map, p_oint, fill_edges, delete_point, external_corner_value, inner_corner_value, fill_value, valid_length, is_valid_length, rect):
-        if (p_oint.y - 1 > rect["x"] and self.map[p_oint.x * self.size_x + p_oint.y - 1] == 0):
-            idy = p_oint.x
-            idx = p_oint.y - 1
+    def rightSearchForExtractCorners(self, point, fill_edges, delete_point: list[Point], external_corner_value, inner_corner_value, valid_length, is_valid_length) -> tuple[list[Point], list[Point]]:
+        if (point.y - 1 > self.tRect["x"] and self.map[point.x * self.size_x + point.y - 1] == 0):
+            idy = point.x
+            idx = point.y - 1
             line = []
             line.append(Point(idy, idx))
 
-            for j in range(idx, rect["x"], -1):
-                if (temp_map[idy * self.size_x + j] == 0):
+            for j in range(idx, self.tRect["x"], -1):
+                if (self.map[idy * self.size_x + j] == 0):
                     black_count = 0
                     up_and_down_neighbourhood = [[-1, 0], [1, 0]]
 
@@ -839,10 +735,10 @@ class BeautifyMap:
                         tmp_idy = idy + up_and_down_neighbourhood[k][0]
                         tmp_idx = j + up_and_down_neighbourhood[k][1]
 
-                        if (tmp_idx < rect["x"] or tmp_idx >= rect["x"] + rect["height"] or tmp_idy < rect["y"] or tmp_idy >= rect["y"] + rect["width"]):
+                        if (tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"] or tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"]):
                             continue
 
-                        if (temp_map[tmp_idy * self.size_x + tmp_idx] == -128 or temp_map[tmp_idy * self.size_x + tmp_idx] == external_corner_value or temp_map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == external_corner_value or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
                             black_count += 1
 
                     if (black_count == 1):
@@ -853,57 +749,45 @@ class BeautifyMap:
                     break
 
             if (is_valid_length and len(line) > 1):
-                line.append(p_oint)
+                line.append(point)
                 fill_edges.append(line)
 
                 for i in range(len(line)):
                     _up_and_down_neighbourhood3 = [[-1, 0], [1, 0]]
 
-                    for _k7 in range(2):
-                        _tmp_idy7 = line[i].x + \
-                            _up_and_down_neighbourhood3[_k7][0]
+                    for k in range(2):
+                        tmp_idy = line[i].x + _up_and_down_neighbourhood3[k][0]
+                        tmp_idx = line[i].y + _up_and_down_neighbourhood3[k][1]
 
-                        _tmp_idx7 = line[i].y + \
-                            _up_and_down_neighbourhood3[_k7][1]
-
-                        if (_tmp_idx7 < rect["x"] or _tmp_idx7 >= rect["x"] + rect["height"] or _tmp_idy7 < rect["y"] or _tmp_idy7 >= rect["y"] + rect["width"]):
+                        if (tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"] or tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"]):
                             continue
 
-                        if (temp_map[_tmp_idy7 * self.size_x + _tmp_idx7] == -128 or temp_map[_tmp_idy7 * self.size_x + _tmp_idx7] == inner_corner_value):
-                            self.map[_tmp_idy7 * self.size_x + _tmp_idx7] = 127
-                            delete_point.append(Point(_tmp_idy7, _tmp_idx7))
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
+                            self.map[tmp_idy * self.size_x + tmp_idx] = 127
+                            delete_point.append(Point(tmp_idy, tmp_idx))
             elif (len(line) > valid_length):
-                line.append(p_oint)
+                line.append(point)
                 fill_edges.append(line)
 
-                for _i9 in range(len(line)):
+                for i in range(len(line)):
                     _up_and_down_neighbourhood4 = [[-1, 0], [1, 0]]
 
-                    for _k8 in range(2):
-                        _tmp_idy8 = line[_i9].x + \
-                            _up_and_down_neighbourhood4[_k8][0]
+                    for k in range(2):
+                        tmp_idy = line[i].x + _up_and_down_neighbourhood4[k][0]
+                        tmp_idx = line[i].y + _up_and_down_neighbourhood4[k][1]
 
-                        _tmp_idx8 = line[_i9].y + \
-                            _up_and_down_neighbourhood4[_k8][1]
-
-                        if (_tmp_idx8 < rect["x"] or _tmp_idx8 >= rect["x"] + rect["height"] or _tmp_idy8 < rect["y"] or _tmp_idy8 >= rect["y"] + rect["width"]):
+                        if (tmp_idx < self.tRect["x"] or tmp_idx >= self.tRect["x"] + self.tRect["height"] or tmp_idy < self.tRect["y"] or tmp_idy >= self.tRect["y"] + self.tRect["width"]):
                             continue
 
-                        if (temp_map[_tmp_idy8 * self.size_x + _tmp_idx8] == -128 or temp_map[_tmp_idy8 * self.size_x + _tmp_idx8] == inner_corner_value):
-                            self.map[_tmp_idy8 * self.size_x + _tmp_idx8] = 127
-                            delete_point.append(Point(_tmp_idy8, _tmp_idx8))
+                        if (self.map[tmp_idy * self.size_x + tmp_idx] == -128 or self.map[tmp_idy * self.size_x + tmp_idx] == inner_corner_value):
+                            self.map[tmp_idy * self.size_x + tmp_idx] = 127
+                            delete_point.append(Point(tmp_idy, tmp_idx))
             else:
                 line = []
 
-        return {
-            "delete_point": delete_point,
-            "fill_edges": fill_edges
-        }
+        return delete_point, fill_edges
 
-    def updateContour(self, contour, delete_points):  # does nothing, really
-        return contour
-
-    def fillEdges(self, temp_map, corners, contour, fill_edges, value):
+    def fillEdges(self, contour: list[Point], fill_edges: list[Point], value):
         for i in range(len(fill_edges)):
             edge = fill_edges[i]
 
@@ -912,159 +796,106 @@ class BeautifyMap:
                 contour.append(edge[j])
         return contour
 
-    def removeIndependentRegion(self, all_region, black_boundary, valid_length, rect):
-        temp_black_boundary = black_boundary
-        return temp_black_boundary
-
-    def fillBlackComponent(self, temp_map, black_region, value):
+    def fillBlackComponent(self, black_region: list[Point], value):
         for i in range(len(black_region)):
-            temp_map[black_region[i].x *
+            self.map[black_region[i].x *
                      self.size_x + black_region[i].y] = value
 
-        return temp_map
-
-    def fillNonBoundaryNoise2(self, nonBoundaryNoise, rect):
-        temp_map = (self.map)
+    def fillNonBoundaryNoise2(self, nonBoundaryNoise: list[Point]):
+        four_neighbourhood = [[5, 0, 4, 0, 3, 0, 2, 0, 1, 0], [0, 5, 0, 4, 0, 3, 0, 2, 0, 1],
+                              [-5, 0, -4, 0, -3, 0, -2, 0, -1, 0], [0, -5, 0, -4, 0, -3, 0, -2, 0, -1]]
 
         for i in range(len(nonBoundaryNoise)):
-            temp_map[nonBoundaryNoise[i].x *
-                     self.size_x + nonBoundaryNoise[i].y] = 28
+            p = nonBoundaryNoise[i]
+            self.map[p.x * self.size_x + p.y] = 28
 
-        four_neighbourhood = [[5, 0, 4, 0, 3, 0, 2, 0, 1, 0], [0, 5, 0, 4, 0, 3, 0, 2, 0, 1], [
-            -5, 0, -4, 0, -3, 0, -2, 0, -1, 0], [0, -5, 0, -4, 0, -3, 0, -2, 0, -1]]
+            for neighbourhood in four_neighbourhood:
+                tmp_p5 = Point(p.x + neighbourhood[1], p.y + neighbourhood[0])
+                tmp_p4 = Point(p.x + neighbourhood[3], p.y + neighbourhood[2])
+                tmp_p3 = Point(p.x + neighbourhood[5], p.y + neighbourhood[4])
+                tmp_p2 = Point(p.x + neighbourhood[7], p.y + neighbourhood[6])
+                tmp_p1 = Point(p.x + neighbourhood[9], p.y + neighbourhood[8])
 
-        for _i12 in range(len(nonBoundaryNoise)):
-            for k in range(4):
-                tmp_idx5 = nonBoundaryNoise[_i12].y + four_neighbourhood[k][0]
-                tmp_idy5 = nonBoundaryNoise[_i12].x + four_neighbourhood[k][1]
-                tmp_idx4 = nonBoundaryNoise[_i12].y + four_neighbourhood[k][2]
-                tmp_idy4 = nonBoundaryNoise[_i12].x + four_neighbourhood[k][3]
-                tmp_idx3 = nonBoundaryNoise[_i12].y + four_neighbourhood[k][4]
-                tmp_idy3 = nonBoundaryNoise[_i12].x + four_neighbourhood[k][5]
-                tmp_idx2 = nonBoundaryNoise[_i12].y + four_neighbourhood[k][6]
-                tmp_idy2 = nonBoundaryNoise[_i12].x + four_neighbourhood[k][7]
-                tmp_idx1 = nonBoundaryNoise[_i12].y + four_neighbourhood[k][8]
-                tmp_idy1 = nonBoundaryNoise[_i12].x + four_neighbourhood[k][9]
-
-                if (tmp_idy5 < rect["y"] or tmp_idy5 >= rect["y"] + rect["width"] or tmp_idx5 < rect["x"] or tmp_idx5 >= rect["x"] + rect["height"] or tmp_idy4 < rect["y"] or tmp_idy4 >= rect["y"] + rect["width"] or tmp_idx4 < rect["x"] or tmp_idx4 >= rect["x"] + rect["height"] or tmp_idy3 < rect["y"] or tmp_idy3 >= rect["y"] + rect["width"] or tmp_idx3 < rect["x"] or tmp_idx3 >= rect["x"] + rect["height"] or tmp_idy2 < rect["y"] or tmp_idy2 >= rect["y"] + rect["width"] or tmp_idx2 < rect["x"] or tmp_idx2 >= rect["x"] + rect["height"] or tmp_idy1 < rect["y"] or tmp_idy1 >= rect["y"] + rect["width"] or tmp_idx1 < rect["x"] or tmp_idx1 >= rect["x"] + rect["height"]):
+                if (tmp_p5.x < self.tRect["y"] or tmp_p5.x >= self.tRect["y"] + self.tRect["width"] or tmp_p5.y < self.tRect["x"] or tmp_p5.y >= self.tRect["x"] + self.tRect["height"] or tmp_p4.x < self.tRect["y"] or tmp_p4.x >= self.tRect["y"] + self.tRect["width"] or tmp_p4.y < self.tRect["x"] or tmp_p4.y >= self.tRect["x"] + self.tRect["height"] or tmp_p3.x < self.tRect["y"] or tmp_p3.x >= self.tRect["y"] + self.tRect["width"] or tmp_p3.y < self.tRect["x"] or tmp_p3.y >= self.tRect["x"] + self.tRect["height"] or tmp_p2.x < self.tRect["y"] or tmp_p2.x >= self.tRect["y"] + self.tRect["width"] or tmp_p2.y < self.tRect["x"] or tmp_p2.y >= self.tRect["x"] + self.tRect["height"] or tmp_p3.x < self.tRect["y"] or tmp_p3.x >= self.tRect["y"] + self.tRect["width"] or tmp_p1.y < self.tRect["x"] or tmp_p1.y >= self.tRect["x"] + self.tRect["height"]):
                     continue
+                if self.map[tmp_p3.x * self.size_x + tmp_p1.y] == 127:
+                    if self.map[tmp_p5.x * self.size_x + tmp_p5.y] == -128 and self.map[tmp_p4.x * self.size_x + tmp_p4.y] == 127 and self.map[tmp_p3.x * self.size_x + tmp_p3.y] == 127 and self.map[tmp_p2.x * self.size_x + tmp_p2.y] == 127:
+                        nonBoundaryNoise.append(tmp_p4)
+                        nonBoundaryNoise.append(tmp_p3)
+                        nonBoundaryNoise.append(tmp_p2)
+                        nonBoundaryNoise.append(tmp_p1)
+                        break
+                    elif self.map[tmp_p4.x * self.size_x + tmp_p4.y] == -128 and self.map[tmp_p3.x * self.size_x + tmp_p3.y] == 127 and self.map[tmp_p2.x * self.size_x + tmp_p2.y] == 127:
+                        nonBoundaryNoise.append(tmp_p3)
+                        nonBoundaryNoise.append(tmp_p2)
+                        nonBoundaryNoise.append(tmp_p1)
+                        break
+                    elif self.map[tmp_p3.x * self.size_x + tmp_p3.y] == -128 and self.map[tmp_p2.x * self.size_x + tmp_p2.y] == 127:
+                        nonBoundaryNoise.append(tmp_p2)
+                        nonBoundaryNoise.append(tmp_p1)
+                        break
+                    elif self.map[tmp_p2.x * self.size_x + tmp_p2.y] == -128:
+                        nonBoundaryNoise.append(tmp_p1)
+                        break
 
-                if (temp_map[tmp_idy5 * self.size_x + tmp_idx5] == -128 and temp_map[tmp_idy4 * self.size_x + tmp_idx4] == 127 and temp_map[tmp_idy3 * self.size_x + tmp_idx3] == 127 and temp_map[tmp_idy2 * self.size_x + tmp_idx2] == 127 and temp_map[tmp_idy1 * self.size_x + tmp_idx1] == 127):
-                    nonBoundaryNoise.append(Point(tmp_idy4, tmp_idx4))
-                    nonBoundaryNoise.append(Point(tmp_idy3, tmp_idx3))
-                    nonBoundaryNoise.append(Point(tmp_idy2, tmp_idx2))
-                    nonBoundaryNoise.append(Point(tmp_idy1, tmp_idx1))
-                    break
-                elif (temp_map[tmp_idy4 * self.size_x + tmp_idx4] == -128 and temp_map[tmp_idy3 * self.size_x + tmp_idx3] == 127 and temp_map[tmp_idy2 * self.size_x + tmp_idx2] == 127 and temp_map[tmp_idy1 * self.size_x + tmp_idx1] == 127):
-                    nonBoundaryNoise.append(Point(tmp_idy3, tmp_idx3))
-                    nonBoundaryNoise.append(Point(tmp_idy2, tmp_idx2))
-                    nonBoundaryNoise.append(Point(tmp_idy1, tmp_idx1))
-                    break
-                elif (temp_map[tmp_idy3 * self.size_x + tmp_idx3] == -128 and temp_map[tmp_idy2 * self.size_x + tmp_idx2] == 127 and temp_map[tmp_idy1 * self.size_x + tmp_idx1] == 127):
-                    nonBoundaryNoise.append(Point(tmp_idy2, tmp_idx2))
-                    nonBoundaryNoise.append(Point(tmp_idy1, tmp_idx1))
-                    break
-                elif (temp_map[tmp_idy2 * self.size_x + tmp_idx2] == -128 and temp_map[tmp_idy1 * self.size_x + tmp_idx1] == 127):
-                    nonBoundaryNoise.append(Point(tmp_idy1, tmp_idx1))
-                    break
-
-        for _i13 in range(len(nonBoundaryNoise)):
-            self.map[nonBoundaryNoise[_i13].x *
-                     self.size_x + nonBoundaryNoise[_i13].y] = -128
+        for p in nonBoundaryNoise:
+            self.map[p.x * self.size_x + p.y] = -128
 
         return nonBoundaryNoise
 
-    def roomColorByChain(self, roomChain):
-        for row in range(self.size_y):
-            for col in range(self.size_x):
-                current_map_value = self.map[row * self.size_x + col]
+    def roomColorByChain(self, roomChain: collections.abc.Iterable[RobotMap.DeviceRoomChainDataInfo]):
+        for offset in range(len(self.map)):
+            match self.map[offset]:
+                case -128: self.map[offset] = -1
+                case 127: self.map[offset] = 1
 
-                if (current_map_value == -128):
-                    self.map[row * self.size_x + col] = -1
-                elif (current_map_value == 127):
-                    self.map[row * self.size_x + col] = 1
+        for room in roomChain:
+            self.floodFillSingleChain(room.points, room.roomId)
 
-        for i in range(len(roomChain)):
-            self.floodFillSingleChain(
-                roomChain[i].points, roomChain[i].roomId)
+    def floodFillSingleChain(self, room_points, roomId):
+        dst = [roomId] * len(self.map)
 
-    def floodFillSingleChain(self, chain_point, value):
-        contour_chain_point = []
-        dst = []
-        row, col = None, None
-        init_seed = Point(1, 1)
-        contour_chain_point = self.getContourInforChainPoint(
-            contour_chain_point, chain_point)
+        for p in room_points:
+            dst[p.y * self.size_x + p.x] = 0
 
-        for i in range(self.size_y):
-            for j in range(self.size_x):
-                dst.append(value)
+        dst = self.scanLineFloodFill(dst, Point(1, 1), roomId, 0)
 
-        for _i14 in range(len(contour_chain_point)):
-            row = contour_chain_point[_i14].y
-            col = contour_chain_point[_i14].x
-            dst[row * self.size_x + col] = 0
+        for p in room_points:
+            dst[p.y * self.size_x + p.x] = roomId
 
-        dst = self.scanLineFloodFill(dst, init_seed, value, 0)
+        for offset in range(len(self.map)):
+            if (dst[offset] == roomId and self.map[offset] not in [-1, 0, -9]):
+                self.map[offset] = dst[offset]
 
-        for _i15 in range(len(contour_chain_point)):
-            row = contour_chain_point[_i15].y
-            col = contour_chain_point[_i15].x
-            dst[row * self.size_x + col] = value
-
-        for _row in range(self.size_y):
-            for _col in range(self.size_x):
-                current_map_value = self.map[_row * self.size_x + _col]
-
-                if (dst[_row * self.size_x + _col] == value and current_map_value != -1 and current_map_value != 0 and current_map_value != -9):
-                    self.map[_row * self.size_x +
-                             _col] = dst[_row * self.size_x + _col]
-
-        if (len(contour_chain_point) > 3):
-            for _i16 in range(1, len(contour_chain_point) - 1):
-                row = contour_chain_point[_i16].y
-                col = contour_chain_point[_i16].x
-
+        if (len(room_points) > 3):
+            for p in room_points[1:-1]:
                 for di in range(-2, 3):
                     for dj in range(-2, 3):
-                        if (row + di < 0 or row + di >= self.size_y or col + dj < 0 or col + dj >= self.size_x):
-                            continue
-                        else:
-                            if (self.map[(row + di) * self.size_x + col + dj] == 1):
-                                self.map[(row + di) * self.size_x +
-                                         col + dj] = value
+                        offset = (p.y + di) * self.size_x + p.x + dj
+                        if (p.y + di >= 0 and p.y + di < self.size_y and p.x + dj >= 0 and p.x + dj < self.size_x) and self.map[offset] == 1:
+                            self.map[offset] = roomId
 
-    def getContourInforChainPoint(self, contour_chain_point, chain_point):
-        for i in range(len(chain_point)):
-            point = Point(0, 0)
-            point.x = chain_point[i].x
-            point.y = chain_point[i].y
-            contour_chain_point.append(point)
-
-        return contour_chain_point
-
-    def scanLineFloodFill(self, dst, initial_seed, raw_value, new_value):
-        scan_line_seed = []
-        scan_line_seed.append(initial_seed)
+    def scanLineFloodFill(self, dst: list[int], initial_seed: Point, raw_value, new_value):
+        scan_line_seed = [initial_seed]
         tempDst = None
 
         while (len(scan_line_seed) > 0):
             seed = scan_line_seed[0]
             scan_line_seed.pop(0)
-            result1 = self.floodFillLine(dst, seed, -1, raw_value, new_value)
-            x_left = result1["boundary"]
-            result2 = self.floodFillLine(
-                result1["dst"], seed, 1, raw_value, new_value)
-            x_right = result2["boundary"]
-            tempDst = result2["dst"]
+            tempDst, x_left = self.floodFillLine(
+                dst, seed, -1, raw_value, new_value)
+
+            tempDst, x_right = self.floodFillLine(
+                tempDst, seed, 1, raw_value, new_value)
+
             scan_line_seed = self.searchLineForNewSeed(
-                result2["dst"], x_left, x_right, seed.y - 1, raw_value, scan_line_seed)
+                tempDst, x_left, x_right, seed.y - 1, raw_value, scan_line_seed)
             scan_line_seed = self.searchLineForNewSeed(
-                result2["dst"], x_left, x_right, seed.y + 1, raw_value, scan_line_seed)
+                tempDst, x_left, x_right, seed.y + 1, raw_value, scan_line_seed)
 
         return tempDst
 
-    def floodFillLine(self, dst, initial_seed, direction, raw_value, new_value):
+    def floodFillLine(self, dst: list[int], initial_seed, direction, raw_value, new_value) -> tuple[list, int]:
         row = initial_seed.y
         col = initial_seed.x
         boundary = col
@@ -1080,12 +911,9 @@ class BeautifyMap:
             else:
                 break
 
-        return {
-            "dst": dst,
-            "boundary": boundary
-        }
+        return dst, boundary
 
-    def searchLineForNewSeed(self, dst, x_left, x_right, line_row, raw_value, scan_line_seed):
+    def searchLineForNewSeed(self, dst: list[int], x_left, x_right, line_row, raw_value, scan_line_seed: list[Point]):
         if (line_row < 0 or line_row > self.size_y - 1):
             return scan_line_seed
 
@@ -1107,52 +935,39 @@ class BeautifyMap:
 
     def fillInternalObstacles(self):
         if (self.tRect["width"] == 0 and self.tRect["height"] == 0):
-            self.tRect = self.findRoiMap(self.tRect)
+            self.findRoiMap()
 
-        contour = []
-        internal_obstacles = []
-        contour_map = self.map
-        result1 = self.extractExternalContoursNewStrategy(
-            contour_map, contour, self.tRect)
-        contour_map = result1["temp_map"]
-        contour = result1["contour"]
-        result2 = self.findContourConnectComponent(
-            contour_map, contour, self.tRect)
-        contour_map = result2["temp_map"]
-        contour = result2["contour"]
-        contour_map = self.fillBlackComponent(contour_map, contour, 30)
-        internal_obstacles = self.findInternalObstacles(
-            contour_map, internal_obstacles, self.tRect)
-        self.map = self.fillBlackComponent(self.map, internal_obstacles, -9)
+        contour = self.extractExternalContoursNewStrategy([])
 
-    def findContourConnectComponent(self, temp_map, contour, rect):
+        contour = self.findContourConnectComponent(contour)
+
+        self.fillBlackComponent(contour, 30)
+        internal_obstacles = self.findInternalObstacles([])
+
+        self.fillBlackComponent(internal_obstacles, -9)
+
+    def findContourConnectComponent(self, contour: list[Point]):
         eight_neighbourhood = [[-1, 0], [1, 0], [0, -1],
                                [0, 1], [-1, 1], [1, 1], [1, -1], [-1, -1]]
-        temp_contour = contour
 
-        while (len(temp_contour) != 0):
-            seed = temp_contour[0]
-            temp_contour.pop(0)
+        while (len(contour) != 0):
+            seed = contour.pop(0)
 
             for k in range(8):
-                temp_idy = seed.x + eight_neighbourhood[k][0]
-                temp_idx = seed.y + eight_neighbourhood[k][1]
-                if (temp_idy < rect["y"] or temp_idy >= rect["y"] + rect["width"] or temp_idx < rect["x"] or temp_idx >= rect["x"] + rect["height"]):
+                currpoint = Point(
+                    seed.x + eight_neighbourhood[k][0], seed.y + eight_neighbourhood[k][1])
+
+                if (self.map[currpoint.x * self.size_x + currpoint.y] != -128 or currpoint.x < self.tRect["y"] or currpoint.x >= self.tRect["y"] + self.tRect["width"] or currpoint.y < self.tRect["x"] or currpoint.y >= self.tRect["x"] + self.tRect["height"]):
                     continue
 
-                if (temp_map[temp_idy * self.size_x + temp_idx] == -128):
-                    temp_map[temp_idy * self.size_x + temp_idx] = 30
-                    temp_contour.append(Point(temp_idy, temp_idx))
-                    contour.append(Point(temp_idy, temp_idx))
+                self.map[currpoint.x * self.size_x + currpoint.y] = 30
+                contour.append(currpoint)
 
-        return {
-            "temp_map": temp_map,
-            "contour": contour
-        }
+        return contour
 
-    def findInternalObstacles(self, temp_map, point_deque, rect):
-        for idy in range(rect["y"], rect["y"] + rect["width"]):
-            for idx in range(rect["x"], rect["x"] + rect["height"]):
-                if (temp_map[idy * self.size_x + idx] == -128):
+    def findInternalObstacles(self, point_deque: list[Point]):
+        for idy in range(self.tRect["y"], self.tRect["y"] + self.tRect["width"]):
+            for idx in range(self.tRect["x"], self.tRect["x"] + self.tRect["height"]):
+                if (self.map[idy * self.size_x + idx] == -128):
                     point_deque.append(Point(idy, idx))
         return point_deque
