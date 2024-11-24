@@ -99,27 +99,15 @@ class IjaiMapDataParser(MapDataParser):
         image_size = image_height * image_width
         _LOGGER.debug("width: %d, height: %d", image_width, image_height)
 
-        mapData_temp = self.robot_map.mapData.mapData
-
-        if (len(set(mapData_temp).symmetric_difference([0, 128, 127])) == 0 and len(self.robot_map.roomChain) > 0 and self.robot_map.mapType == 0):
-            buautify_obj = Beautify.BeautifyMap()
-            buautify_obj.setMap(self.robot_map)
+        # Non painted map tranformation
+        if (len(set(self.robot_map.mapData.mapData).symmetric_difference([0, 128, 127])) == 0 and len(self.robot_map.roomChain) > 0 and self.robot_map.mapType == 0):
+            buautify_obj = Beautify.BeautifyMap(self.robot_map.mapHead)
+            buautify_obj.setMap(self.robot_map.mapData)
             buautify_obj.transform()
             buautify_obj.roomColorByChain(self.robot_map.roomChain)
             buautify_obj.fillInternalObstacles()
-
-            mapData_temp = buautify_obj.getMap()
-
-            for i in range(len(mapData_temp)):
-                if mapData_temp[i] < 0:
-                    mapData_temp[i] = (256 + mapData_temp[i]) % 256
-                elif mapData_temp[i] > 255:
-                    mapData_temp[i] = mapData_temp[i] % 256
-                elif mapData_temp[i] == 30:
-                    mapData_temp[i] = 0
-                elif mapData_temp[i] == 40:
-                    mapData_temp[i] = 255
-            self.robot_map.mapData.mapData = bytes(mapData_temp)
+            buautify_obj.normalizeMap()
+            self.robot_map.mapData.mapData = bytes(buautify_obj.getMap())
 
         image, rooms_raw, cleaned_areas, cleaned_areas_layer = self._image_parser.parse(self.robot_map.mapData.mapData, image_width, image_height)
         if image is None:
