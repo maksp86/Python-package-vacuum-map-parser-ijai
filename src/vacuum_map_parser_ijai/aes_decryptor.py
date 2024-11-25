@@ -61,7 +61,7 @@ def gen_md5_key(wifi_info_sn: str, owner_id: str, device_id: str, model: str, de
 
 def decrypt(data: bytes, wifi_info_sn: str, owner_id: str, device_id: str, model: str, device_mac: str) -> bytes:
     try:
-        data = base64.b64decode(data)
+        data = base64.b64decode(data, validate=True)
     except:
         pass
     return aes_decrypt(data, gen_md5_key(wifi_info_sn, owner_id, device_id, model, device_mac))
