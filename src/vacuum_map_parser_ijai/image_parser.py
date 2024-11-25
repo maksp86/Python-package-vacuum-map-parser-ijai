@@ -86,10 +86,10 @@ class IjaiImageParser:
                         max(rooms[room_number][3], room_y))
                     pixels[x, y] = self._palette.get_room_color(room_number)
                 else:
-                    pixels[x, y] = self._palette.get_color(SupportedColor.UNKNOWN)
+                    pixels[x, y] = IjaiImageParser.get_color(SupportedColor.UNKNOWN)
                     unknown_pixels.add(pixel_type)
                     _LOGGER.debug(f"unknown pixel [{x},{y}] = {pixel_type}")
-        if self._image_config.scale != 1 or trimmed_width != 0 or trimmed_height != 0:
+        if self._image_config.scale != 1 and trimmed_width != 0 and trimmed_height != 0:
             image = image.resize((int(trimmed_width * scale), int(trimmed_height * scale)), resample=Resampling.NEAREST)
             if draw_cleaned_area:
                 cleaned_areas_layer = cleaned_areas_layer.resize(
