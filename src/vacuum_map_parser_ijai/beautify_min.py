@@ -1,6 +1,5 @@
-import collections.abc
 from vacuum_map_parser_base.map_data import Point
-from RobotMap_pb2 import RobotMap
+from vacuum_map_parser_ijai.RobotMap_pb2 import RobotMap
 import collections
 
 
@@ -99,11 +98,6 @@ class BeautifyMap:
             self.tRect["y"] = left_bound
             self.tRect["width"] = width
             self.tRect["height"] = height
-        else:
-            self.tRect["x"] = 0
-            self.tRect["y"] = 0
-            self.tRect["width"] = self.size_y
-            self.tRect["height"] = self.size_x
 
     def expandBlackRect(self, kernel_size_x, kernel_size_y, threshold):
         il, ir, jl, jr = (None, None, None, None)
