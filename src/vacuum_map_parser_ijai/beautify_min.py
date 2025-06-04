@@ -1,7 +1,9 @@
 # pylint: skip-file
-from vacuum_map_parser_base.map_data import Point
-from vacuum_map_parser_ijai.RobotMap_pb2 import RobotMap
 import collections
+
+from vacuum_map_parser_base.map_data import Point
+
+from vacuum_map_parser_ijai.RobotMap_pb2 import RobotMap
 
 
 class BeautifyMap:

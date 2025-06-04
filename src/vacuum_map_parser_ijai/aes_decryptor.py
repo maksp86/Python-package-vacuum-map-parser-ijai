@@ -1,10 +1,12 @@
+import base64
+import binascii
+
 from Crypto.Cipher import AES
 from Crypto.Hash import MD5
 from Crypto.Util.Padding import pad, unpad
-import base64
-
 
 isEncryptKeyTypeHex = True
+
 
 def aes_encrypt(data, key: str):
     cipher = AES.new(key.encode("utf-8"), AES.MODE_ECB)
@@ -14,6 +16,7 @@ def aes_encrypt(data, key: str):
     encryptedBase64Str = base64.b64encode(encryptedData).decode("utf-8")
 
     return encryptedBase64Str
+
 
 def aes_decrypt(data, key: str):
     parsedKey = key.encode("utf-8")
@@ -59,6 +62,6 @@ def gen_md5_key(wifi_info_sn: str, owner_id: str, device_id: str, model: str, de
 def decrypt(data: bytes, wifi_info_sn: str, owner_id: str, device_id: str, model: str, device_mac: str) -> bytes:
     try:
         data = base64.b64decode(data, validate=True)
-    except:
+    except binascii.Error:
         pass
     return aes_decrypt(data, gen_md5_key(wifi_info_sn, owner_id, device_id, model, device_mac))

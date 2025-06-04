@@ -12,12 +12,13 @@ from vacuum_map_parser_base.config.size import Sizes
 from vacuum_map_parser_base.config.text import Text
 from vacuum_map_parser_base.map_data import Area, ImageData, MapData, Path, Point, Room, Wall
 from vacuum_map_parser_base.map_data_parser import MapDataParser
-from .ijai_coordinate_transforms import Transformer
-import vacuum_map_parser_ijai.RobotMap_pb2 as RobotMap
-import vacuum_map_parser_ijai.beautify_min as Beautify
 
-from .image_parser import IjaiImageParser
+import vacuum_map_parser_ijai.beautify_min as Beautify
+import vacuum_map_parser_ijai.RobotMap_pb2 as RobotMap
+
 from .aes_decryptor import decrypt
+from .ijai_coordinate_transforms import Transformer
+from .image_parser import IjaiImageParser
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class IjaiMapDataParser(MapDataParser):
     def parse(self, raw: bytes, *args: Any, **kwargs: Any) -> MapData:
         map_data = MapData(0, 1)
 
-        IjaiMapDataParser.robot_map.ParseFromString(raw)
+        self.robot_map.ParseFromString(raw)
         self.coord_transformer = Transformer(self.robot_map)
 
         if hasattr(self.robot_map, "mapData"):
@@ -77,11 +78,16 @@ class IjaiMapDataParser(MapDataParser):
                 x=pos_info.x, y=pos_info.y, a=pos_info.phi * 180 / math.pi)
             _LOGGER.debug("pos: %s", map_data.vacuum_position)
 
-        if hasattr(self.robot_map, "mapInfo") and hasattr(self.robot_map, "roomDataInfo") and map_data.rooms is not None:
+        if (
+                hasattr(self.robot_map, "mapInfo")
+                and hasattr(self.robot_map, "roomDataInfo")
+                and map_data.rooms is not None):
             IjaiMapDataParser._parse_rooms(map_data.rooms)
 
         if hasattr(self.robot_map, "virtualWalls"):
-            map_data.walls, map_data.no_go_areas, map_data.no_mopping_areas = IjaiMapDataParser._parse_restricted_areas()
+            (map_data.walls,
+             map_data.no_go_areas,
+             map_data.no_mopping_areas) = IjaiMapDataParser._parse_restricted_areas()
 
         if map_data.rooms is not None:
             _LOGGER.debug("rooms: %s", [str(room)
@@ -109,7 +115,10 @@ class IjaiMapDataParser(MapDataParser):
         _LOGGER.debug("width: %d, height: %d", image_width, image_height)
 
         # Non painted map tranformation
-        if (len(set(self.robot_map.mapData.mapData).symmetric_difference([0, 128, 127])) == 0 and len(self.robot_map.roomChain) > 0 and self.robot_map.mapType == 0):
+        if (
+                len(set(self.robot_map.mapData.mapData).symmetric_difference([0, 128, 127])) == 0
+                and len(self.robot_map.roomChain) > 0
+                and self.robot_map.mapType == 0):
             buautify_obj = Beautify.BeautifyMap(self.robot_map.mapHead)
             buautify_obj.setMap(self.robot_map.mapData)
             buautify_obj.transform()
@@ -180,7 +189,7 @@ class IjaiMapDataParser(MapDataParser):
     def _parse_rooms(map_data_rooms: dict[int, Room]) -> None:
         map_id = IjaiMapDataParser.robot_map.mapHead.mapHeadId
         for map_data in IjaiMapDataParser.robot_map.mapInfo:
-            if (map_data.mapHeadId == map_id):
+            if map_data.mapHeadId == map_id:
                 current_map = map_data
                 break
         map_name = current_map.mapName
