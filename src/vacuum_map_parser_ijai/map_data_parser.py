@@ -10,7 +10,7 @@ from vacuum_map_parser_base.config.drawable import Drawable
 from vacuum_map_parser_base.config.image_config import ImageConfig
 from vacuum_map_parser_base.config.size import Sizes
 from vacuum_map_parser_base.config.text import Text
-from vacuum_map_parser_base.map_data import Area, ImageData, MapData, Path, Point, Room, Wall, Zone
+from vacuum_map_parser_base.map_data import Area, ImageData, MapData, Path, Point, Room, Wall
 from vacuum_map_parser_base.map_data_parser import MapDataParser
 from .ijai_coordinate_transforms import Transformer
 import vacuum_map_parser_ijai.RobotMap_pb2 as RobotMap
@@ -46,11 +46,11 @@ class IjaiMapDataParser(MapDataParser):
     def unpack_map(self, raw_encoded: bytes, *args: Any, **kwargs: Any) -> bytes:
         return zlib.decompress(
             decrypt(
-                raw_encoded, 
-                kwargs['wifi_sn'], 
-                kwargs['owner_id'], 
-                kwargs['device_id'], 
-                kwargs['model'], 
+                raw_encoded,
+                kwargs['wifi_sn'],
+                kwargs['owner_id'],
+                kwargs['device_id'],
+                kwargs['model'],
                 kwargs['device_mac']))
 
     def parse(self, raw: bytes, *args: Any, **kwargs: Any) -> MapData:
@@ -67,12 +67,14 @@ class IjaiMapDataParser(MapDataParser):
 
         if hasattr(self.robot_map, "chargeStation"):
             pos_info = self.robot_map.chargeStation
-            map_data.charger = Point(x = pos_info.x, y = pos_info.y, a = pos_info.phi * 180 / math.pi)
+            map_data.charger = Point(
+                x=pos_info.x, y=pos_info.y, a=pos_info.phi * 180 / math.pi)
             _LOGGER.debug("pos: %s", map_data.charger)
 
         if hasattr(self.robot_map, "currentPose"):
             pos_info = self.robot_map.currentPose
-            map_data.vacuum_position = Point(x = pos_info.x, y = pos_info.y, a = pos_info.phi * 180 / math.pi)
+            map_data.vacuum_position = Point(
+                x=pos_info.x, y=pos_info.y, a=pos_info.phi * 180 / math.pi)
             _LOGGER.debug("pos: %s", map_data.vacuum_position)
 
         if hasattr(self.robot_map, "mapInfo") and hasattr(self.robot_map, "roomDataInfo") and map_data.rooms is not None:
@@ -82,13 +84,20 @@ class IjaiMapDataParser(MapDataParser):
             map_data.walls, map_data.no_go_areas, map_data.no_mopping_areas = IjaiMapDataParser._parse_restricted_areas()
 
         if map_data.rooms is not None:
-            _LOGGER.debug("rooms: %s", [str(room) for number, room in map_data.rooms.items()])
+            _LOGGER.debug("rooms: %s", [str(room)
+                          for number, room in map_data.rooms.items()])
             if map_data.rooms is not None and len(map_data.rooms) > 0 and map_data.vacuum_position is not None:
-                vacuum_position_on_image = self.coord_transformer.map_to_image(map_data.vacuum_position)
-                map_data.vacuum_room = IjaiImageParser.get_current_vacuum_room(self.robot_map.mapData.mapData, vacuum_position_on_image, IjaiMapDataParser.robot_map.mapHead.sizeX)
+                vacuum_position_on_image = self.coord_transformer.map_to_image(
+                    map_data.vacuum_position)
+                map_data.vacuum_room = IjaiImageParser.get_current_vacuum_room(
+                    self.robot_map.mapData.mapData, vacuum_position_on_image, IjaiMapDataParser.robot_map.mapHead.sizeX)
                 if map_data.vacuum_room is not None:
                     map_data.vacuum_room_name = map_data.rooms[map_data.vacuum_room].name
                 _LOGGER.debug("current vacuum room: %s", map_data.vacuum_room)
+
+        if map_data.image is not None and not map_data.image.is_empty:
+            self._image_generator.draw_map(map_data)
+
         return map_data
 
     def _parse_image(self) -> tuple[ImageData, dict[int, Room], set[int]]:
@@ -109,10 +118,12 @@ class IjaiMapDataParser(MapDataParser):
             buautify_obj.normalizeMap()
             self.robot_map.mapData.mapData = bytes(buautify_obj.getMap())
 
-        image, rooms_raw, cleaned_areas, cleaned_areas_layer = self._image_parser.parse(self.robot_map.mapData.mapData, image_width, image_height)
+        image, rooms_raw, cleaned_areas, cleaned_areas_layer = self._image_parser.parse(
+            self.robot_map.mapData.mapData, image_width, image_height)
         if image is None:
             image = self._image_generator.create_empty_map_image()
-        _LOGGER.debug("img: number of rooms: %d, numbers: %s", len(rooms_raw), rooms_raw.keys())
+        _LOGGER.debug("img: number of rooms: %d, numbers: %s",
+                      len(rooms_raw), rooms_raw.keys())
         rooms = {}
         for number, room in rooms_raw.items():
             rooms[number] = Room(
@@ -143,7 +154,7 @@ class IjaiMapDataParser(MapDataParser):
         path_points = []
         for pt in IjaiMapDataParser.robot_map.historyPose.points:
             # 0: taxi, 1: working
-            path_points.append(Point(x = pt.x, y = pt.y))
+            path_points.append(Point(x=pt.x, y=pt.y))
         return Path(len(path_points), 1, 0, [path_points])
 
     @staticmethod
@@ -181,4 +192,5 @@ class IjaiMapDataParser(MapDataParser):
                 map_data_rooms[r.roomId].pos_y = r.roomNamePost.y
 
             room_text_pos = Point(r.roomNamePost.x, r.roomNamePost.y)
-            _LOGGER.debug("room#%d: %s %s", r.roomId, r.roomName, room_text_pos)
+            _LOGGER.debug("room#%d: %s %s", r.roomId,
+                          r.roomName, room_text_pos)
