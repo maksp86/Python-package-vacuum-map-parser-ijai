@@ -31,6 +31,7 @@ class IjaiMapDataParser(MapDataParser):
     VIRTUALWALL_TYPE_NO_MOP = 6
     VIRTUALWALL_TYPE_NO_GO = 3
 
+    # pylint: disable=E1101
     robot_map = RobotMap.RobotMap()
 
     def __init__(
@@ -58,6 +59,7 @@ class IjaiMapDataParser(MapDataParser):
         map_data = MapData(0, 1)
 
         self.robot_map.ParseFromString(raw)
+        # pylint: disable=W0201
         self.coord_transformer = Transformer(self.robot_map)
 
         if hasattr(self.robot_map, "mapData"):
@@ -127,7 +129,7 @@ class IjaiMapDataParser(MapDataParser):
             buautify_obj.normalizeMap()
             self.robot_map.mapData.mapData = bytes(buautify_obj.getMap())
 
-        image, rooms_raw, cleaned_areas, cleaned_areas_layer = self._image_parser.parse(
+        image, rooms_raw, cleaned_areas = self._image_parser.parse(
             self.robot_map.mapData.mapData, image_width, image_height)
         if image is None:
             image = self._image_generator.create_empty_map_image()
@@ -152,7 +154,6 @@ class IjaiMapDataParser(MapDataParser):
                 self._image_config,
                 image,
                 self.coord_transformer.map_to_image,
-                additional_layers={Drawable.CLEANED_AREA: cleaned_areas_layer},
             ),
             rooms,
             cleaned_areas,

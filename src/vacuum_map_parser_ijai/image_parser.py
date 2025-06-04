@@ -38,8 +38,8 @@ class IjaiImageParser:
 
     def parse(
         self, map_data: bytes, width: int, height: int
-    ) -> tuple[ImageType | None, dict[int, tuple[int, int, int, int]], set[int], ImageType | None]:
-        rooms = {}
+    ) -> tuple[ImageType | None, dict[int, tuple[int, int, int, int]], set[int]]:
+        rooms: dict[int, tuple[int, int, int, int]] = {}
         cleaned_areas = set()
         _LOGGER.debug("ijai parser: image_config = %s", self._image_config)
         scale = self._image_config.scale
@@ -50,17 +50,10 @@ class IjaiImageParser:
         trimmed_height = height - trim_top - trim_bottom
         trimmed_width = width - trim_left - trim_right
         if trimmed_width == 0 or trimmed_height == 0:
-            return None, {}, set(), None
+            return None, {}, set()
 
         image = Image.new('RGBA', (trimmed_width, trimmed_height))
         pixels = image.load()
-        cleaned_areas_layer = None
-        cleaned_areas_pixels = None
-        draw_cleaned_area = Drawable.CLEANED_AREA in self._drawables
-        if draw_cleaned_area:
-            cleaned_areas_layer = Image.new(
-                "RGBA", (trimmed_width, trimmed_height))
-            cleaned_areas_pixels = cleaned_areas_layer.load()
         _LOGGER.debug("trim_bottom = %s, trim_top = %s, trim_left = %s, trim_right = %s",
                       trim_bottom, trim_top, trim_left, trim_right)
         unknown_pixels = set()
@@ -80,9 +73,6 @@ class IjaiImageParser:
                         room_number = pixel_type - IjaiImageParser.MAP_SELECTED_ROOM_MIN + \
                             IjaiImageParser.MAP_ROOM_MIN
                         cleaned_areas.add(room_number)
-                        if draw_cleaned_area:
-                            cleaned_areas_pixels[x, y] = self._palette.get_color(
-                                SupportedColor.CLEANED_AREA)
                     rooms[room_number] = (room_x, room_y, room_x, room_y) \
                         if room_number not in rooms \
                         else (min(rooms[room_number][0], room_x),
@@ -99,12 +89,9 @@ class IjaiImageParser:
         if self._image_config.scale != 1 and trimmed_width != 0 and trimmed_height != 0:
             image = image.resize(
                 (int(trimmed_width * scale), int(trimmed_height * scale)), resample=Resampling.NEAREST)
-            if draw_cleaned_area:
-                cleaned_areas_layer = cleaned_areas_layer.resize(
-                    (int(trimmed_width * scale), int(trimmed_height * scale)), resample=Resampling.NEAREST)
         if len(unknown_pixels) > 0:
             _LOGGER.warning('unknown pixel_types: %s', unknown_pixels)
-        return image, rooms, cleaned_areas, cleaned_areas_layer
+        return image, rooms, cleaned_areas
 
     @staticmethod
     def get_current_vacuum_room(map_data: bytes, vacuum_position_on_image: Point, image_width: int) -> int | None:

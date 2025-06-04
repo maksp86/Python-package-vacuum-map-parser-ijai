@@ -1,8 +1,10 @@
+"""Module that provides mapping for status property"""
 from dataclasses import dataclass
 
 
 @dataclass
 class IjaiVacuumStatusMapping:
+    """Dataclass containing mapping for status property"""
     # vacuum service id
     siid: int = 2
 
@@ -11,7 +13,7 @@ class IjaiVacuumStatusMapping:
 
     # idle_at is status property values from https://home.miot-spec.com/spec/model
     # 0,1,2,4,8,10 are common idle states for most ijai/xiaomi miot robot-vacuums
-    idle_at: tuple = (0, 1, 2, 4, 8, 10)
+    idle_at: tuple[int, ...] = (0, 1, 2, 4, 8, 10)
 
 
 _NON_STANDARD_STATUS_PROP = [

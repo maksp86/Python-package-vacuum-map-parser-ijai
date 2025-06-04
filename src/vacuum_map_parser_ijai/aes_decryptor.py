@@ -1,3 +1,5 @@
+"""Module that provides functions for decrypting a map."""
+
 import base64
 import binascii
 
@@ -8,7 +10,7 @@ from Crypto.Util.Padding import pad, unpad
 isEncryptKeyTypeHex = True
 
 
-def aes_encrypt(data, key: str):
+def aes_encrypt(data: str, key: str) -> str:
     cipher = AES.new(key.encode("utf-8"), AES.MODE_ECB)
 
     encryptedData = cipher.encrypt(
@@ -18,7 +20,7 @@ def aes_encrypt(data, key: str):
     return encryptedBase64Str
 
 
-def aes_decrypt(data, key: str):
+def aes_decrypt(data: bytes, key: str) -> bytes:
     parsedKey = key.encode("utf-8")
     if isEncryptKeyTypeHex:
         parsedKey = bytes.fromhex(key)
@@ -32,7 +34,7 @@ def aes_decrypt(data, key: str):
     return bytes.fromhex(decryptedData.decode("utf-8"))
 
 
-def md5key(string: str, model: str, device_mac: str):
+def md5key(string: str, model: str, device_mac: str) -> str:
     pjstr = "".join(device_mac.lower().split(":"))
 
     tempModel = model.split('.')[-1]
@@ -53,7 +55,7 @@ def md5key(string: str, model: str, device_mac: str):
     return temp[8:-8].upper()
 
 
-def gen_md5_key(wifi_info_sn: str, owner_id: str, device_id: str, model: str, device_mac: str):
+def gen_md5_key(wifi_info_sn: str, owner_id: str, device_id: str, model: str, device_mac: str) -> str:
     arr = [wifi_info_sn, owner_id, device_id]
     tempString = '+'.join(arr)
     return md5key(tempString, model, device_mac)

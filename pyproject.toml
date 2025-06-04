@@ -13,9 +13,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Topic :: Home Automation",
 ]
-packages = [
-    { include = "vacuum_map_parser_ijai", from = "src" },
-]
+packages = [{ include = "vacuum_map_parser_ijai", from = "src" }]
 
 [tool.poetry.urls]
 "Homepage" = "https://github.com/Tarh-76/Python-package-vacuum-map-parser-ijai"
@@ -47,6 +45,12 @@ line_length = 120
 
 [tool.mypy]
 platform = "linux"
+exclude = '''(?x)
+    ( ^.*RobotMap_pb2\.py$
+    | ^.*RobotMap_pb2\.pyi$
+    | ^.*beautify_min\.py$
+    )
+'''
 
 check_untyped_defs = true
 disallow_any_generics = true
@@ -66,7 +70,18 @@ warn_unused_configs = true
 warn_unused_ignores = true
 
 [tool.pylint]
-disable = ["C0103", "C0116", "R0902", "R0903", "R0912", "R0913", "R0914", "R0915", "W0640", "R0917"]
+disable = [
+    "C0103",
+    "C0116",
+    "R0902",
+    "R0903",
+    "R0912",
+    "R0913",
+    "R0914",
+    "R0915",
+    "W0640",
+    "R0917",
+]
 max-line-length = 120
 
 [build-system]
