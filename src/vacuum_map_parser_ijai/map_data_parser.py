@@ -10,7 +10,7 @@ from vacuum_map_parser_base.config.drawable import Drawable
 from vacuum_map_parser_base.config.image_config import ImageConfig
 from vacuum_map_parser_base.config.size import Sizes
 from vacuum_map_parser_base.config.text import Text
-from vacuum_map_parser_base.map_data import Area, ImageData, MapData, Path, Point, Room, Wall
+from vacuum_map_parser_base.map_data import Area, ImageData, MapData, Path, Point, Room, Wall, Zone
 from vacuum_map_parser_base.map_data_parser import MapDataParser
 
 import vacuum_map_parser_ijai.beautify_min as Beautify
@@ -91,6 +91,12 @@ class IjaiMapDataParser(MapDataParser):
              map_data.no_go_areas,
              map_data.no_mopping_areas) = IjaiMapDataParser._parse_restricted_areas()
 
+        if hasattr(self.robot_map, "areasInfo"):
+            map_data.zones = IjaiMapDataParser._parse_cleaning_zones()
+
+        if hasattr(self.robot_map, "navigationPoints"):
+            map_data.goto = IjaiMapDataParser._parse_goto_point()
+
         if map_data.rooms is not None:
             _LOGGER.debug("rooms: %s", [str(room)
                           for number, room in map_data.rooms.items()])
@@ -118,7 +124,8 @@ class IjaiMapDataParser(MapDataParser):
 
         # Non painted map tranformation
         if (
-                len(set(self.robot_map.mapData.mapData).symmetric_difference([0, 128, 127])) == 0
+                len(set(self.robot_map.mapData.mapData).symmetric_difference(
+                    [0, 128, 127])) == 0
                 and len(self.robot_map.roomChain) > 0
                 and self.robot_map.mapType == 0):
             buautify_obj = Beautify.BeautifyMap(self.robot_map.mapHead)
@@ -185,6 +192,29 @@ class IjaiMapDataParser(MapDataParser):
                 no_mop_areas.append(
                     Area(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y, p4.x, p4.y))
         return walls, no_go_areas, no_mop_areas
+
+    @staticmethod
+    def _parse_cleaning_zones() -> list[Zone]:
+        zones = []
+        for areaInfo in IjaiMapDataParser.robot_map.areasInfo:
+            zones.append(Zone(areaInfo.points[0].x,
+                              areaInfo.points[0].y,
+                              areaInfo.points[2].x,
+                              areaInfo.points[2].y))
+        return zones
+
+    @staticmethod
+    def _parse_goto_point() -> Point | None:
+        for navigationPoint in IjaiMapDataParser.robot_map.navigationPoints:
+            if (
+                    navigationPoint.status == 0
+                    and navigationPoint.pointType == 1
+                    and navigationPoint.x != 1100.0  # outside map
+                    and navigationPoint.y != 1100.0):
+                return Point(navigationPoint.x,
+                             navigationPoint.y,
+                             navigationPoint.phi * 180 / math.pi)
+        return None
 
     @staticmethod
     def _parse_rooms(map_data_rooms: dict[int, Room]) -> None:
