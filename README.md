@@ -45,6 +45,13 @@ unpacked_map = parser.unpack_map(raw_map,
                                  device_mac='**:**:**:**:**:**')
 parsed_map = parser.parse(unpacked_map)
 ```
+  
+## Supported vacuums:
+- ijai.vacuum.* (at least v1, v2, v3, v10, v13, v18, v19)
+- xiaomi.vacuum.c103
+- xiaomi.vacuum.c104
+- xiaomi.vacuum.b106eu
+*If you got another vacuum to work, please tell us*
 
 ## Special thanks
 
