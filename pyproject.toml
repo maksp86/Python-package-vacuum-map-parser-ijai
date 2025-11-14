@@ -5,7 +5,7 @@ version = "0.0.0"
 license = "Apache-2.0"
 description = "Functionalities for Ijai vacuum map parsing"
 readme = "README.md"
-authors = ["Alexander Vassilyevsky <tarh_@mail.ru>", "maksp86 <maksp@gsqd.ru>"]
+authors = ["maksp86 <maksp@gsqd.ru>", "Alexander Vassilyevsky <tarh_@mail.ru>"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -16,19 +16,19 @@ classifiers = [
 packages = [{ include = "vacuum_map_parser_ijai", from = "src" }]
 
 [tool.poetry.urls]
-"Homepage" = "https://github.com/Tarh-76/Python-package-vacuum-map-parser-ijai"
-"Repository" = "https://github.com/Tarh-76/Python-package-vacuum-map-parser-ijai"
-"Bug Tracker" = "https://github.com/Tarh-76/Python-package-vacuum-map-parser-ijai/issues"
-"Changelog" = "https://github.com/Tarh-76/Python-package-vacuum-map-parser-ijai/releases"
+"Homepage" = "https://github.com/maksp86/Python-package-vacuum-map-parser-ijai"
+"Repository" = "https://github.com/maksp86/Python-package-vacuum-map-parser-ijai"
+"Bug Tracker" = "https://github.com/maksp86/Python-package-vacuum-map-parser-ijai/issues"
+"Changelog" = "https://github.com/maksp86/Python-package-vacuum-map-parser-ijai/releases"
 
 [tool.poetry.dependencies]
 python = "^3.11"
 Pillow = "*"
 pycryptodome = "*"
 
-vacuum-map-parser-base = "0.1.5"
+vacuum-map-parser-base = ">=0.1.5"
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 black = "*"
 mypy = "*"
 ruff = "*"
