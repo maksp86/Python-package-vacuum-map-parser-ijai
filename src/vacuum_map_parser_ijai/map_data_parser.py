@@ -3,13 +3,18 @@
 import logging
 import math
 import zlib
+from dataclasses import replace
+from pathlib import Path as FilePath
 from typing import Any
 
-from vacuum_map_parser_base.config.color import ColorsPalette
+from PIL import ImageFont
+
+from vacuum_map_parser_base.config.color import ColorsPalette, SupportedColor
 from vacuum_map_parser_base.config.drawable import Drawable
 from vacuum_map_parser_base.config.image_config import ImageConfig
-from vacuum_map_parser_base.config.size import Sizes
+from vacuum_map_parser_base.config.size import Size, Sizes
 from vacuum_map_parser_base.config.text import Text
+from vacuum_map_parser_base.image_generator import ImageGenerator
 from vacuum_map_parser_base.map_data import Area, ImageData, MapData, Path, Point, Room, Wall, Zone
 from vacuum_map_parser_base.map_data_parser import MapDataParser
 
@@ -21,6 +26,55 @@ from .ijai_coordinate_transforms import Transformer
 from .image_parser import IjaiImageParser
 
 _LOGGER = logging.getLogger(__name__)
+
+# Fraction of the final rendered image width the vacuum icon's radius
+# should take up, matched by measuring the official Xiaomi app's icon
+# against its map image.
+TARGET_VACUUM_RADIUS_RATIO = 0.022
+
+# Fraction of the final rendered image width used as the room-name font
+# size.
+ROOM_NAME_FONT_RATIO = 0.035
+ROOM_NAME_MIN_FONT_SIZE = 10
+
+# Bundled font used for room names: Pillow's built-in default font doesn't
+# cover Turkish characters (ı, ğ, ş, ö, ü, ç render as missing-glyph boxes),
+# and relying on whatever happens to be installed on the host isn't
+# reliable -- Home Assistant OS ships with no system fonts.
+_FONT_PATH = FilePath(__file__).parent / "fonts" / "DejaVuSans.ttf"
+
+
+class _IjaiImageGenerator(ImageGenerator):
+    """ImageGenerator that sizes room-name text relative to the map instead
+    of using vacuum_map_parser_base's hardcoded-tiny default PIL font."""
+
+    def _draw_room_names(self, map_data: MapData) -> None:
+        if map_data.rooms is None or map_data.image is None:
+            return
+        color = self._get_color(SupportedColor.ROOM_NAMES)
+        dims = map_data.image.dimensions
+        font_size = max(ROOM_NAME_MIN_FONT_SIZE, int(dims.width * dims.scale * ROOM_NAME_FONT_RATIO))
+        font: Any
+        try:
+            font = ImageFont.truetype(str(_FONT_PATH), font_size)
+        except OSError:
+            _LOGGER.warning("Unable to load bundled font %s, falling back to PIL default", _FONT_PATH)
+            font = ImageFont.load_default(size=font_size)
+        for room in map_data.rooms.values():
+            p = room.point()
+            if p is None or room.name is None:
+                continue
+            point = p.to_img(dims)
+            self._draw_room_name_text(map_data.image, room.name, point.x, point.y, font, color)
+
+    @staticmethod
+    def _draw_room_name_text(image: ImageData, text: str, x: float, y: float, font: Any, color: Any) -> None:
+        def draw_func(draw: Any) -> None:
+            left, top, right, bottom = draw.textbbox((0, 0), text, font)
+            w, h = right - left, bottom - top
+            draw.text((x - w / 2, y - h / 2), text, font=font, fill=color)
+
+        ImageGenerator._draw_on_new_layer(image, draw_func, ImageGenerator._use_transparency(color))
 
 
 class IjaiMapDataParser(MapDataParser):
@@ -44,6 +98,8 @@ class IjaiMapDataParser(MapDataParser):
     ):
         super().__init__(palette, sizes, drawables, image_config, texts)
         self._image_parser = IjaiImageParser(palette, image_config, drawables)
+        self._drawables = drawables
+        self._image_generator = _IjaiImageGenerator(palette, sizes, drawables, image_config, texts)
 
     def unpack_map(self, raw_encoded: bytes, *args: Any, **kwargs: Any) -> bytes:
         return zlib.decompress(
@@ -110,6 +166,24 @@ class IjaiMapDataParser(MapDataParser):
                 _LOGGER.debug("current vacuum room: %s", map_data.vacuum_room)
 
         if map_data.image is not None and not map_data.image.is_empty:
+            # Icon/line sizes (vacuum, charger, obstacles, path width, ...)
+            # are plain pixel values that vacuum_map_parser_base never
+            # scales, so they end up a fixed, inconsistent fraction of the
+            # final image depending on how much the auto-crop/auto-scale in
+            # IjaiImageParser enlarged this particular map. Instead of
+            # scaling them relative to the map's own (highly variable)
+            # scale factor, target a fixed fraction of the final rendered
+            # width -- matching how big the vacuum icon looks in the
+            # official app regardless of how tightly this map got cropped.
+            dims = map_data.image.dimensions
+            final_width = dims.width * dims.scale
+            base_vacuum_radius = self._sizes.get_size(Size.VACUUM_RADIUS)
+            target_vacuum_radius = TARGET_VACUUM_RADIUS_RATIO * final_width
+            icon_scale = target_vacuum_radius / base_vacuum_radius if base_vacuum_radius else 1
+            if icon_scale != 1:
+                scaled_sizes = Sizes({size: self._sizes.get_size(size) * icon_scale for size in Size})
+                self._image_generator = _IjaiImageGenerator(
+                    self._palette, scaled_sizes, self._drawables, self._image_config, self._texts)
             self._image_generator.draw_map(map_data)
 
         return map_data
@@ -123,11 +197,12 @@ class IjaiMapDataParser(MapDataParser):
         _LOGGER.debug("width: %d, height: %d", image_width, image_height)
 
         # Non painted map tranformation
-        if (
-                len(set(self.robot_map.mapData.mapData).symmetric_difference(
-                    [0, 128, 127])) == 0
-                and len(self.robot_map.roomChain) > 0
-                and self.robot_map.mapType == 0):
+        will_beautify = (
+            len(set(self.robot_map.mapData.mapData).symmetric_difference(
+                [0, 128, 127])) == 0
+            and len(self.robot_map.roomChain) > 0
+            and self.robot_map.mapType == 0)
+        if will_beautify:
             buautify_obj = Beautify.BeautifyMap(self.robot_map.mapHead)
             buautify_obj.setMap(self.robot_map.mapData)
             buautify_obj.transform()
@@ -136,7 +211,7 @@ class IjaiMapDataParser(MapDataParser):
             buautify_obj.normalizeMap()
             self.robot_map.mapData.mapData = bytes(buautify_obj.getMap())
 
-        image, rooms_raw, cleaned_areas = self._image_parser.parse(
+        image, rooms_raw, cleaned_areas, effective_trim, effective_scale = self._image_parser.parse(
             self.robot_map.mapData.mapData, image_width, image_height)
         if image is None:
             image = self._image_generator.create_empty_map_image()
@@ -151,6 +226,13 @@ class IjaiMapDataParser(MapDataParser):
                 self.coord_transformer.image_to_map_y(room[3] + image_top),
                 number,
             )
+        # ImageData re-derives its own trim/scale from image_config + the
+        # raw (untrimmed) width/height passed below, so the auto-detected
+        # trim and scale computed by the image parser have to be threaded
+        # through here too, otherwise path/wall/vacuum-position drawing
+        # would be positioned/scaled against the configured values instead
+        # of the ones actually used to size the rendered image.
+        effective_image_config = replace(self._image_config, trim=effective_trim, scale=effective_scale)
         return (
             ImageData(
                 image_size,
@@ -158,7 +240,7 @@ class IjaiMapDataParser(MapDataParser):
                 image_left,
                 image_height,
                 image_width,
-                self._image_config,
+                effective_image_config,
                 image,
                 self.coord_transformer.map_to_image,
             ),
@@ -219,12 +301,15 @@ class IjaiMapDataParser(MapDataParser):
     @staticmethod
     def _parse_rooms(map_data_rooms: dict[int, Room]) -> None:
         map_id = IjaiMapDataParser.robot_map.mapHead.mapHeadId
+        # While the vacuum is returning to the dock or idle, mapInfo may not
+        # list the current map; the room data below is still valid.
+        current_map = None
         for map_data in IjaiMapDataParser.robot_map.mapInfo:
             if map_data.mapHeadId == map_id:
                 current_map = map_data
                 break
-        map_name = current_map.mapName
-        _LOGGER.debug("map#%d: %s", current_map.mapHeadId, map_name)
+        if current_map is not None:
+            _LOGGER.debug("map#%d: %s", current_map.mapHeadId, current_map.mapName)
         for r in IjaiMapDataParser.robot_map.roomDataInfo:
             if map_data_rooms is not None and r.roomId in map_data_rooms:
                 map_data_rooms[r.roomId].name = r.roomName

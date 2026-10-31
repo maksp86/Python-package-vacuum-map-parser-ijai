@@ -14,6 +14,10 @@ classifiers = [
     "Topic :: Home Automation",
 ]
 packages = [{ include = "vacuum_map_parser_ijai", from = "src" }]
+include = [
+    { path = "src/vacuum_map_parser_ijai/fonts/*.ttf", format = ["sdist", "wheel"] },
+    { path = "src/vacuum_map_parser_ijai/fonts/LICENSE", format = ["sdist", "wheel"] },
+]
 
 [tool.poetry.urls]
 "Homepage" = "https://github.com/maksp86/Python-package-vacuum-map-parser-ijai"

@@ -7,10 +7,23 @@ from PIL.Image import Image as ImageType
 from PIL.Image import Resampling
 from vacuum_map_parser_base.config.color import ColorsPalette, SupportedColor
 from vacuum_map_parser_base.config.drawable import Drawable
-from vacuum_map_parser_base.config.image_config import ImageConfig
+from vacuum_map_parser_base.config.image_config import ImageConfig, TrimConfig
 from vacuum_map_parser_base.map_data import Point
 
 _LOGGER = logging.getLogger(__name__)
+
+# Ijai vacuums report a fixed-size map canvas (e.g. 800x800) regardless of
+# how much of it has actually been explored, so the explored area can end
+# up as a small island surrounded by a large unexplored (MAP_OUTSIDE)
+# background. Pad the auto-detected content bounding box by this many
+# source pixels on each side before trimming to it.
+AUTO_TRIM_PADDING = 15
+
+# After auto-cropping, the explored area is often tiny in absolute pixel
+# terms. If scaling it up to at least this many pixels on its longer edge
+# would need more than the configured scale, bump the scale to reach it,
+# so maps aren't blurry/pixelated by default.
+AUTO_SCALE_TARGET_DIMENSION = 960
 
 
 class IjaiImageParser:
@@ -31,26 +44,72 @@ class IjaiImageParser:
         self._image_config = image_config
         self._drawables = drawables
         self.color_map = {
-            IjaiImageParser.MAP_OUTSIDE: palette.get_color(SupportedColor.MAP_OUTSIDE),
+            # Fully transparent rather than a filled color (matches Dreame's
+            # rendering): the unexplored background should show through to
+            # whatever is behind the image (card/page background), not
+            # paint over it with a fixed color.
+            IjaiImageParser.MAP_OUTSIDE: (255, 255, 255, 0),
             IjaiImageParser.MAP_WALL: palette.get_color(SupportedColor.MAP_WALL_V2),
             IjaiImageParser.MAP_SCAN: palette.get_color(SupportedColor.SCAN),
             IjaiImageParser.MAP_NEW_DISCOVERED_AREA: palette.get_color(SupportedColor.NEW_DISCOVERED_AREA)}
 
+    def _compute_effective_trim(self, map_data: bytes, width: int, height: int) -> TrimConfig:
+        configured = self._image_config.trim
+        min_x = min_y = None
+        max_x = max_y = -1
+        for i, pixel_type in enumerate(map_data):
+            if pixel_type != IjaiImageParser.MAP_OUTSIDE:
+                x = i % width
+                y = i // width
+                if min_x is None or x < min_x:
+                    min_x = x
+                if min_y is None or y < min_y:
+                    min_y = y
+                max_x = max(max_x, x)
+                max_y = max(max_y, y)
+
+        if min_x is None or min_y is None:
+            # Nothing explored yet; leave the configured trim as-is.
+            return configured
+
+        auto_left = max(0, min_x - AUTO_TRIM_PADDING) / width * 100
+        auto_right = max(0, width - 1 - max_x - AUTO_TRIM_PADDING) / width * 100
+        auto_bottom = max(0, min_y - AUTO_TRIM_PADDING) / height * 100
+        auto_top = max(0, height - 1 - max_y - AUTO_TRIM_PADDING) / height * 100
+
+        return TrimConfig(
+            left=max(configured.left, auto_left),
+            right=max(configured.right, auto_right),
+            top=max(configured.top, auto_top),
+            bottom=max(configured.bottom, auto_bottom),
+        )
+
     def parse(
         self, map_data: bytes, width: int, height: int
-    ) -> tuple[ImageType | None, dict[int, tuple[int, int, int, int]], set[int]]:
+    ) -> tuple[ImageType | None, dict[int, tuple[int, int, int, int]], set[int], TrimConfig, float]:
         rooms: dict[int, tuple[int, int, int, int]] = {}
         cleaned_areas = set()
         _LOGGER.debug("ijai parser: image_config = %s", self._image_config)
-        scale = self._image_config.scale
-        trim_left = int(self._image_config.trim.left * width / 100)
-        trim_right = int(self._image_config.trim.right * width / 100)
-        trim_top = int(self._image_config.trim.top * height / 100)
-        trim_bottom = int(self._image_config.trim.bottom * height / 100)
+        configured_scale = self._image_config.scale
+        effective_trim = self._compute_effective_trim(map_data, width, height)
+        trim_left = int(effective_trim.left * width / 100)
+        trim_right = int(effective_trim.right * width / 100)
+        trim_top = int(effective_trim.top * height / 100)
+        trim_bottom = int(effective_trim.bottom * height / 100)
         trimmed_height = height - trim_top - trim_bottom
         trimmed_width = width - trim_left - trim_right
         if trimmed_width == 0 or trimmed_height == 0:
-            return None, {}, set()
+            return None, {}, set(), effective_trim, configured_scale
+
+        longer_edge = max(trimmed_width, trimmed_height)
+        auto_scale = AUTO_SCALE_TARGET_DIMENSION / longer_edge if longer_edge > 0 else 1
+        scale = max(configured_scale, auto_scale)
+        _LOGGER.debug(
+            "trimmed_width=%d trimmed_height=%d configured_scale=%s auto_scale=%.3f "
+            "effective_scale=%.3f final_image_size=%dx%d",
+            trimmed_width, trimmed_height, configured_scale, auto_scale, scale,
+            int(trimmed_width * scale), int(trimmed_height * scale),
+        )
 
         image = Image.new('RGBA', (trimmed_width, trimmed_height))
         pixels = image.load()
@@ -86,12 +145,16 @@ class IjaiImageParser:
                     unknown_pixels.add(pixel_type)
                     _LOGGER.debug(
                         "unknown pixel [%s,%s] = %s", x, y, pixel_type)
-        if self._image_config.scale != 1 and trimmed_width != 0 and trimmed_height != 0:
+        if scale != 1 and trimmed_width != 0 and trimmed_height != 0:
+            # LANCZOS blurs the hard edges between rooms/walls on this
+            # flat-color map; NEAREST keeps them crisp. The bigger win was
+            # the auto-crop putting more of the image where the floor plan
+            # actually is, not smoothing the resize.
             image = image.resize(
                 (int(trimmed_width * scale), int(trimmed_height * scale)), resample=Resampling.NEAREST)
         if len(unknown_pixels) > 0:
             _LOGGER.warning('unknown pixel_types: %s', unknown_pixels)
-        return image, rooms, cleaned_areas
+        return image, rooms, cleaned_areas, effective_trim, scale
 
     @staticmethod
     def get_current_vacuum_room(map_data: bytes, vacuum_position_on_image: Point, image_width: int) -> int | None:
